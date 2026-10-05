@@ -1,0 +1,57 @@
+<Window x:Class="NameTool.SequenceVariablesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="变量说明（批量序号）"
+        Width="560"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontSize="12"
+        Background="#F4F8FC">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C9DDF4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder" CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#F2F8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E8F2FF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="16">
+        <TextBlock Text="可用变量" FontSize="14" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,0,4"/>
+        <TextBlock Text="把变量写进「批量序号」的模板里，改名时会替换成对应内容。变量名可以选中后 Ctrl+C 复制，也可以点右侧「复制」。"
+                   TextWrapping="Wrap" Foreground="#5A6B7D" Margin="0,0,0,12"/>
+
+        <StackPanel x:Name="RowsHost"/>
+
+        <TextBlock Text="示例：  {name}-第{n}集  →  破晓时分-第01集.srt" Foreground="#4F6E95" Margin="0,12,0,0" TextWrapping="Wrap"/>
+        <TextBlock Text="不写任何变量时，序号会追加在模板末尾（旧写法，继续有效）。" Foreground="#8A94A6" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+        <!-- 查找替换 · 变量已挪到批量替换区的「说明」弹窗（ReplaceVariablesWindow） -->
+
+        <Button Content="关闭" Width="76" Height="26" HorizontalAlignment="Right" Margin="0,14,0,0" Click="Close_Click"/>
+    </StackPanel>
+</Window>

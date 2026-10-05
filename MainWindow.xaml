@@ -1,0 +1,1515 @@
+﻿<Window x:Class="NameTool.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:vm="clr-namespace:NameTool.ViewModels"
+        xmlns:infra="clr-namespace:NameTool.Infrastructure"
+        mc:Ignorable="d"
+        Height="840" Width="1280" MinWidth="1040" MinHeight="620"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="#F4F8FC"
+        BorderBrush="#DCE6F2"
+        BorderThickness="1"
+        AllowDrop="True"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewDragEnter="Window_PreviewDragEnter"
+        PreviewDragOver="Window_PreviewDragOver"
+        PreviewDragLeave="Window_PreviewDragLeave"
+        PreviewDrop="Window_PreviewDrop">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            GlassFrameThickness="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="0"
+                            UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- 图标资源键 -> App.xaml 里合并进来的矢量图标 -->
+        <infra:IconLookupConverter x:Key="IconLookup"/>
+
+        <!-- 行内小图标的统一样式：24×24、矢量缩放、垂直居中 -->
+        <Style x:Key="RowIconStyle" TargetType="Image">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Stretch" Value="Uniform"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Source" Value="{Binding IconKey, Converter={StaticResource IconLookup}}"/>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C9DDF4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#F2F8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E8F2FF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 列表底部「操作条」上的按钮（115 网盘那一排）。
+             为什么要单独一组：隐式样式是白底 + 极浅蓝边框（#C9DDF4），压在同样浅蓝的底条
+             （#F6FBFF）上时边界几乎看不见 —— 用户反馈「看起来不像按键」。
+             这里把边框加深、并把高度/内边距/最小宽度统一固定：一排长短不一的文案要靠同一组尺寸
+             约束对齐，而不是各自写 Width（那样只会更乱）。
+             hover / pressed 用一层半透明遮罩（不是写死某个颜色），所以同一份模板能直接套在
+             白底、橙底、蓝底三种按钮上，不必像 OrangeButtonStyle 那样各抄一份模板。
+             另外顺手修掉一个老问题：隐式样式的模板里 ContentPresenter 没绑 Padding，
+             所以以前写在按钮上的 Padding 其实是无效的（宽度全靠文案撑）。这里绑上了。 -->
+        <Style x:Key="BarButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="64"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#33475B"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#AECBEC"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BarBorder" CornerRadius="5"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <Grid>
+                                <Border x:Name="BarOverlay" CornerRadius="5" Background="Transparent"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BarOverlay" Property="Background" Value="#14000000"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="BarOverlay" Property="Background" Value="#26000000"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="BarBorder" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 「繁=>简」：与本地列表工具条上那一颗同色系（橙），一眼看出是同一件事 -->
+        <Style x:Key="BarAccentButtonStyle" TargetType="Button" BasedOn="{StaticResource BarButtonStyle}">
+            <Setter Property="Background" Value="#FFF3E8"/>
+            <Setter Property="BorderBrush" Value="#E0AE6E"/>
+            <Setter Property="Foreground" Value="#8A5A12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <!-- 主动作（按规则重命名）：整排里唯一实心，视线自然落上去 -->
+        <Style x:Key="BarPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource BarButtonStyle}">
+            <Setter Property="Background" Value="#1890FF"/>
+            <Setter Property="BorderBrush" Value="#0F7AE5"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="MinWidth" Value="100"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Margin" Value="0"/>
+        </Style>
+
+        <!-- 分组之间的竖细线。做成「左侧边框」而不是独立元素：跟着所在组一起换行，
+             不会出现竖线孤零零留在行首 / 行尾的情况。
+             不要给上下 margin —— 那会把整行撑高（WrapPanel 的行高按最高的子元素算），
+             结算下来按钮行会变成 32 而不是 26，白白多占 6px 高。 -->
+        <Style x:Key="BarGroupStyle" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#D3E2F4"/>
+            <Setter Property="BorderThickness" Value="1,0,0,0"/>
+            <Setter Property="Padding" Value="7,0,0,0"/>
+        </Style>
+
+        <!-- 橙色强调按钮（「返回本地列表」用）。
+             注意：必须自己带一份模板，隐式 Button 样式的 hover 触发器会把背景刷成浅蓝，
+             那种情况下的橙色只在没悬停时成立，鼠标一放上去就「变色」了。 -->
+        <Style x:Key="OrangeButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#F5821F"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#D96F10"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="10,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="OrangeBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="OrangeBorder" Property="Background" Value="#FF9B3D"/>
+                                <Setter TargetName="OrangeBorder" Property="BorderBrush" Value="#E88425"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="OrangeBorder" Property="Background" Value="#D96F10"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="OrangeBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 路径栏里的目录名：纯文字链接，不要边框、不要底色、不带图标。
+             必须自带模板 —— 隐式 Button 样式会画出浅蓝边框，悬停时还会填底色。 -->
+        <Style x:Key="CrumbLinkStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="#1A6FD4"/>
+            <Setter Property="Padding" Value="2,1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderThickness="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#F5821F"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#9AA6B2"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TitleBarButtonStyle" TargetType="Button">
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="TitleButtonBorder" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#E4E4E4"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#DADADA"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RoundedGroupBoxStyle" TargetType="GroupBox">
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="BorderBrush" Value="#CFE0F2"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GroupBox">
+                        <Border CornerRadius="8"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Background="{TemplateBinding Background}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="28"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Row="0" Background="#EAF4FF" CornerRadius="8,8,0,0" BorderBrush="#DCE9F7" BorderThickness="0,0,0,1">
+                                    <ContentPresenter ContentSource="Header" Margin="10,0" VerticalAlignment="Center"/>
+                                </Border>
+
+                                <ContentPresenter Grid.Row="1" Margin="8"/>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SpinnerButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="#EAF3FF"/>
+            <Setter Property="Foreground" Value="#4F6E95"/>
+            <Setter Property="FontSize" Value="9"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="SpinnerButtonBorder" Background="{TemplateBinding Background}" BorderBrush="#C9DDF4" BorderThickness="0,0,0,1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="SpinnerButtonBorder" Property="Background" Value="#DCEBFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="SpinnerButtonBorder" Property="Background" Value="#CFE2FD"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StatusIconPathStyle" TargetType="Path">
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="Height" Value="12"/>
+            <Setter Property="Stretch" Value="Uniform"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsProcessing}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Setter Property="Fill" Value="#1296DB"/>
+                    <Setter Property="Data" Value="M685.3632,329.6597L338.2272,329.6597C330.8885,329.6597 325.2907,324.4032 325.2907,318.3957 325.2907,312.0469 331.3323,307.2 338.2272,307.2L685.3632,307.2C692.6677,307.2 698.2656,312.4224 698.2656,318.4299 698.7093,324.4032 692.6677,329.6597 685.3632,329.6597z M702.6005,750.9333L321.3995,750.9333C313.6853,750.9333 307.2,745.3355 307.2,738.5771 307.2,731.8528 313.6853,726.2549 321.3995,726.2549L702.6005,726.2549C710.3488,726.2549 716.8,731.8528 716.8,738.5771 716.8,745.3355 710.3147,750.9333 702.6005,750.9333z M644.7787,609.0411C623.1381,571.7333 594.8416,547.9424 564.8725,533.6064 594.8416,518.8267 622.7285,495.4453 644.3691,458.9227 666.0096,422.0587 680.1749,372.8043 682.6667,307.2L658.0907,307.2C656.0427,367.8891 643.1061,413.0133 623.5477,446.2251 598.9717,488.8917 571.9381,511.4197 536.9856,522.1035L535.2789,522.5131C534.0501,522.9227,533.6405,523.3323,532.8213,523.7419L531.5584,524.9707 530.7392,525.7899 529.4763,528.2475 528.2475,531.5243 528.2475,536.0299 529.0667,538.8971C529.8859,540.1259,530.3296,540.5355,530.7392,541.3547L531.5584,542.5835 532.8213,543.0272A9.1136,9.1136,0,0,0,534.8693,544.256L536.9856,545.0752C572.3477,556.1344 599.0059,578.2869 623.5477,620.1003 634.368,638.1568 642.3211,659.0805 648.5333,683.2469 649.7963,690.2443 654.336,705.4336 655.1893,725.0944 635.6309,707.8571 581.5296,695.5691 516.608,694.7499L516.608,505.3099C517.4272,505.3099,517.8368,504.8661,518.656,504.4565L522.0011,502.8181A141.3803,141.3803,0,0,0,581.0859,468.7872A167.2533,167.2533,0,0,0,619.3835,409.7365A11.7419,11.7419,0,0,0,612.3179,394.1376A12.1856,12.1856,0,0,0,596.5141,400.6912A144.6229,144.6229,0,0,1,564.0192,451.5499C551.1168,463.8379,535.7227,473.7024,516.1643,479.4368L514.4917,480.256 512.4437,480.6656 511.1808,480.256 509.0987,479.4368C489.9499,473.2928 473.7024,463.872 461.2096,451.5499 446.6347,437.6235 436.224,420.3861 428.7488,401.1008 426.2571,394.9568 419.1915,391.68 413.3547,394.1376A12.288,12.288,0,0,0,406.2549,409.7365C415.0272,432.2645 427.4859,452.4032 444.5525,468.7872A141.9264,141.9264,0,0,0,502.4427,502.8181L506.1973,504.0469C507.4261,504.8661 507.8357,504.8661 508.6549,505.2757L508.6549,694.7499C447.8976,694.7499 395.0251,704.9899 370.0736,719.3259 370.8928,709.5296 372.9749,698.8459 376.7296,683.2811 382.976,658.6709 391.2704,638.1568 401.3056,620.9195 426.2229,578.2528 452.8811,556.1344 488.6869,545.0752L489.9499,544.256C491.1787,543.8464 491.5883,543.4368 492.4416,543.0272L493.6704,542.1739 494.5237,540.9451 495.7525,538.4875A12.5269,12.5269,0,0,0,496.6059,535.2107L496.6059,531.1147A7.5093,7.5093,0,0,0,495.7525,528.2475A6.656,6.656,0,0,0,494.5237,525.7899L493.6704,524.5611 492.8512,523.7419 491.5883,524.1515C490.7691,523.7419 490.3595,523.3323 489.5403,522.9227L487.8336,522.5131C452.4715,511.8293 425.4037,489.3013 400.8619,447.0443 381.3035,413.4229 368.4011,368.2987 365.9093,307.6096L341.3333,307.6096C343.8251,373.2139 357.9904,422.0245 379.2213,458.5131 400.8619,495.8549 429.1584,519.2363 459.1275,533.9819 429.1584,548.3179 401.2715,572.1429 379.6309,608.6315 359.2192,643.8912 345.088,689.8347 342.1525,750.9333L681.8475,750.9333C678.912,689.4251 665.1904,643.4816 644.7787,609.0411z"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSuccess}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Setter Property="Fill" Value="#52C41A"/>
+                    <Setter Property="Data" Value="M512,85.3333C747.648,85.3333 938.6667,276.352 938.6667,512 938.6667,747.648 747.648,938.6667 512,938.6667 276.352,938.6667 85.3333,747.648 85.3333,512 85.3333,276.352 276.352,85.3333 512,85.3333z M437.0347,635.7333L346.4533,545.152A42.6667,42.6667,0,1,0,286.1227,605.4827L406.8267,726.1867A42.6667,42.6667,0,0,0,467.1573,726.1867L768.8107,424.4907A42.6667,42.6667,0,1,0,708.5227,364.16L436.992,635.648z"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSuccess}" Value="False">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Setter Property="Fill" Value="#FF696A"/>
+                    <Setter Property="Data" Value="M511.9995,65.29C265.2916,65.29 65.2905,265.2911 65.2905,511.999 65.2905,758.7079 265.2916,958.709 511.9995,958.709 758.7074,958.709 958.7085,758.7079 958.7085,511.999 958.7085,265.2911 758.7074,65.29 511.9995,65.29L511.9995,65.29z M716.8286,637.8544C723.6325,644.6737,723.6325,655.7111,716.8286,662.5304L662.5299,716.828C655.7106,723.633,644.6742,723.6484,637.8539,716.828L511.9995,590.9737 386.1441,716.828C379.3248,723.633,368.2731,723.633,361.4681,716.828L307.1704,662.5304C300.3654,655.7254,300.3654,644.6737,307.1704,637.8544L433.0402,511.999 307.1704,386.1446C300.3654,379.3253,300.3654,368.2736,307.1704,361.4686L361.4681,307.1699C368.2884,300.366,379.3248,300.366,386.1441,307.1699L511.9995,433.0407 637.8539,307.1699C644.6742,300.366,655.7106,300.366,662.5299,307.1699L716.8286,361.4686C723.6325,368.2736,723.6325,379.3253,716.8286,386.1446L590.9731,511.999 716.8286,637.8544 716.8286,637.8544z M716.8286,637.8544"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="30"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#DCE6F2" BorderThickness="0,0,0,1" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="26"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="34"/>
+                    <ColumnDefinition Width="34"/>
+                </Grid.ColumnDefinitions>
+
+                <Image Grid.Column="0" Width="16" Height="16" Margin="8,0,2,0" VerticalAlignment="Center" Source="/Images/logo-2-1.ico"/>
+                <TextBlock x:Name="TitleText" Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center" FontSize="13" Foreground="#333" Text="NameTool"/>
+
+                <TextBlock x:Name="UpdateNoticeText"
+                           Grid.Column="2"
+                           Margin="8,0,10,0"
+                           VerticalAlignment="Center"
+                           Foreground="#D62828"
+                           FontWeight="Bold"
+                           FontSize="12"
+                           Cursor="Hand"
+                           TextDecorations="Underline"
+                           Visibility="Collapsed"
+                           MouseLeftButtonUp="UpdateNotice_Click"
+                           Text="发现新版本，点击升级"/>
+
+                <Button Grid.Column="3" Content="—" FontSize="12" Style="{StaticResource TitleBarButtonStyle}" Click="MinimizeWindow_Click"/>
+                <Button Grid.Column="4" Content="×" FontSize="20" Style="{StaticResource TitleBarButtonStyle}" Click="CloseWindow_Click"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="10">
+            <Grid.ColumnDefinitions>
+                <!-- 列表区 : 功能区 = 2 : 1（原先 3 : 2）。
+                     把更多宽度让给左侧列表（两个 DataGrid 的列宽都是 *，会跟着一起变宽）；
+                     功能区只剩约 1/3，所以里面所有固定宽度都必须改成可伸缩 / 可换行，
+                     并给出 MinWidth 下限 —— 到 420 就是功能区还能排得下的极限。
+                     左侧留 500 下限，保证「参与 / 原文件名 / 预览 / 状态」四列不被压扁。 -->
+                <ColumnDefinition Width="2*" MinWidth="500"/>
+                <ColumnDefinition Width="*" MinWidth="420"/>
+            </Grid.ColumnDefinitions>
+
+        <GroupBox Margin="0,0,10,0" Background="#F6FBFF">
+            <GroupBox.Style>
+                <Style TargetType="GroupBox" BasedOn="{StaticResource RoundedGroupBoxStyle}">
+                    <Setter Property="Header" Value="文件列表"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding CurrentMode}" Value="Editor">
+                            <Setter Property="Header" Value="{Binding SelectedFile.OriginalFileName, StringFormat='编辑: {0}'}"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                            <Setter Property="Header" Value="115 网盘"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </GroupBox.Style>
+            <DockPanel>
+                <Border x:Name="DropHintBorder"
+                        DockPanel.Dock="Bottom"
+                        Visibility="Collapsed"
+                        IsHitTestVisible="False"
+                        Background="#E6F2FF"
+                        BorderBrush="#1890FF"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8,6"
+                        Margin="0,8,0,0">
+                    <TextBlock HorizontalAlignment="Center"
+                               FontWeight="Bold"
+                               Foreground="#1890FF"
+                               Text="松开鼠标即可添加文件（任意格式，可直接拖入文件夹；.srt / .ass / .txt 可编辑内容）"/>
+                </Border>
+
+                <!-- 本地文件工具栏：只在「本地 + 列表模式」显示。
+                     以前这一条在编辑模式下也照旧显示，按钮 + 提示文字加起来比左栏还宽，
+                     末尾的「返回列表」被挤到可视区之外，用户反馈「进了编辑模式找不到退出的地方」。
+                     现在编辑模式换成下面那条专用的返回条。 -->
+                <StackPanel x:Name="LocalToolbar" Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding N115.IsLocalMode}" Value="True"/>
+                                        <Condition Binding="{Binding CurrentMode}" Value="List"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <Button Content="添加文件..." Click="AddFiles_Click" Width="92" Height="30" Margin="0,0,6,0"/>
+                    <Button Content="添加文件夹..." Click="AddFolder_Click" Width="98" Height="30" Margin="0,0,6,0"/>
+                    <Button Content="移除选中" Command="{Binding RemoveSelectedFileCommand}" Width="86" Height="30" Margin="0,0,6,0"/>
+                    <Button Content="清空" Command="{Binding ClearFilesCommand}" Width="72" Height="30" Margin="0,0,6,0" BorderBrush="#9EC5F8"/>
+                    <Button Content="115网盘" Click="OpenN115_Click" Width="86" Height="30" Margin="0,0,6,0"
+                            Background="#EAF4FF" BorderBrush="#87B6EA" FontWeight="Bold"/>
+                    <!-- 繁=>简双路由：网盘模式转网盘选中项名称，本地模式转本地文件 -->
+                    <Button Content="繁=&gt;简" Width="76" Height="30" Margin="0,0,6,0"
+                            Background="#FFF3E8" BorderBrush="#EBC79A"
+                            ToolTip="把文件名（网盘模式下为选中条目名）里的繁体字转成简体。&#10;· 本地模式：.srt / .ass / .txt 会改写正文，其它格式只改文件名&#10;· 只处理勾选的文件 / 网盘选中的条目（一个都没选中则本地处理全部）&#10;· 字幕正文写回前会留 .bak（若已勾选备份）；文件名可点「撤销」回退">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Command" Value="{Binding RunToSimplifiedCommand}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                        <Setter Property="Command" Value="{Binding N115.ToSimplifiedCommand}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <CheckBox Content="递归扫描文件夹" IsChecked="{Binding RecursiveAddFolder}" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- 字幕编辑工具条：只在「本地 + 编辑模式」显示。
+                     返回按钮放在最左边，不受列宽影响；按 Esc 也能回列表。 -->
+                <Border x:Name="EditorToolbar" DockPanel.Dock="Top" Margin="0,0,0,8"
+                        Background="#FFF7EE" BorderBrush="#F3D3AC" BorderThickness="1"
+                        CornerRadius="4" Padding="8,5">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding N115.IsLocalMode}" Value="True"/>
+                                        <Condition Binding="{Binding CurrentMode}" Value="Editor"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="← 返回列表"
+                                Command="{Binding ReturnToListCommand}"
+                                Style="{StaticResource OrangeButtonStyle}"
+                                Width="104" Height="28" Margin="0,0,12,0"
+                                ToolTip="回到文件列表（也可以直接按 Esc）。改动过的内容保留在列表里，不会丢。"/>
+                        <Button Content="保存"
+                                Command="{Binding SaveSubtitleCommand}"
+                                Width="72" Height="28" Margin="0,0,6,0"
+                                Background="#1890FF" Foreground="White"
+                                ToolTip="把编辑器里的内容原样写回这个文件（保持原编码），不套用右侧任何规则。"/>
+                        <Button Content="另存为…"
+                                Click="SaveSubtitleAs_Click"
+                                Width="86" Height="28" Margin="0,0,12,0"
+                                ToolTip="把编辑器里的内容另存为另一个文件，原文件不动。"/>
+                        <TextBlock Text="{Binding SelectedFile.OriginalFileName}"
+                                   VerticalAlignment="Center" FontWeight="Bold" MaxWidth="200"
+                                   Foreground="#8A5A1E" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding EditorStatusText}"
+                                   VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="190"
+                                   Foreground="#1D7A3F" FontWeight="Bold"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="改完点「保存」写回文件"
+                                   VerticalAlignment="Center" Margin="14,0,0,0" Foreground="#A0722E"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 115 网盘工具栏：第一行操作按钮 + 账号，第二行当前路径（独占一行，方便看清层级） -->
+                <Grid DockPanel.Dock="Top" Margin="0,0,0,8"
+                      Visibility="{Binding N115.IsActive, Converter={StaticResource BoolToVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
+                        <Button Content="返回本地列表" Click="ExitN115_Click" Width="106" Height="30" Margin="0,0,6,0"
+                                Style="{StaticResource OrangeButtonStyle}"/>
+                        <Button Content="根目录" Command="{Binding N115.GoRootCommand}" Width="66" Height="30" Margin="0,0,6,0"/>
+                        <Button Content="刷新" Command="{Binding N115.RefreshCommand}" Width="60" Height="30" Margin="0,0,6,0"/>
+                        <Rectangle Width="1" Height="20" Fill="#D6E4F3" Margin="4,0,10,0" VerticalAlignment="Center"/>
+                        <Button Content="移动到…" Command="{Binding N115.MoveToCommand}" Width="76" Height="30" Margin="0,0,6,0"
+                                ToolTip="把选中项移动到你挑选的目录（选中的文件夹不能移进它自己）"/>
+                        <Button Content="复制到…" Command="{Binding N115.CopyToCommand}" Width="76" Height="30" Margin="0,0,6,0"
+                                ToolTip="把选中项复制到你挑选的目录，原位置内容不变"/>
+                        <Button Content="重命名" Command="{Binding N115.RenameSingleCommand}" Width="76" Height="30" Margin="0,0,6,0"
+                                ToolTip="给单个文件改名字：弹窗里填新名字，确认后立即生效（不套用右侧任何规则）。&#10;只支持单个文件 —— 多选或文件夹时不可用；&#10;批量 / 文件夹改名请用表格底部的「按右侧规则重命名」"/>
+                        <Button Content="删除" Command="{Binding N115.DeleteSelectedCommand}" Width="60" Height="30" Margin="0,0,6,0"
+                                Foreground="#C0392B" BorderBrush="#E8A9A9"
+                                ToolTip="删除选中项（进入 115 回收站，可在 115 网页版恢复）"/>
+                        <Button Content="重新登录" Command="{Binding N115.ReloginCommand}" Width="76" Height="30"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                        <TextBlock Text="{Binding N115.AccountText}" VerticalAlignment="Center" Foreground="#4F6E95" Margin="0,0,8,0" FontWeight="Bold"/>
+                        <Button Content="退出登录" Command="{Binding N115.LogoutCommand}" Height="30"/>
+                    </StackPanel>
+
+                    <!-- 当前路径：按钮行下方独占一行 -->
+                    <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                            Margin="0,8,0,0"
+                            Background="#F6FBFF"
+                            BorderBrush="#DCE9F7"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,3">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="路径：" VerticalAlignment="Center"
+                                       Foreground="#8A94A6" FontWeight="Bold"/>
+
+                            <ScrollViewer Grid.Column="1"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          HorizontalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="N115Crumbs" ItemsSource="{Binding N115.Crumbs}" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&gt;" VerticalAlignment="Center" Margin="4,0,4,0"
+                                                           Foreground="#8A94A6" FontWeight="Bold"
+                                                           Visibility="{Binding ShowSeparator, Converter={StaticResource BoolToVis}}"/>
+                                                <!-- 只用文字（不带图标、不带边框），点击即跳到该层级 -->
+                                                <Button Style="{StaticResource CrumbLinkStyle}"
+                                                        Height="22"
+                                                        Content="{Binding Name}"
+                                                        Command="{Binding DataContext.N115.GoToCrumbCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- 本地列表的处理范围条：只有勾选的文件会被处理。
+                     放在内容区上方另起一条（与 115 网盘底部那条同款），本地模式才显示 -->
+                <Border DockPanel.Dock="Bottom"
+                        Background="#F6FBFF"
+                        BorderBrush="#DCE9F7"
+                        BorderThickness="0,1,0,0"
+                        Padding="8,6"
+                        Margin="0,8,0,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <!-- 只在「本地列表」这一屏显示：进 115 网盘或打开字幕编辑器时都收起来 -->
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding N115.IsLocalMode}" Value="True"/>
+                                        <Condition Binding="{Binding CurrentMode}" Value="List"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" FontWeight="Bold"
+                                   Text="{Binding ScopeSummary}"
+                                   ToolTip="只有勾选的文件会被改名 / 改内容，取消勾选的行原样不动；序号也会按勾选范围重算。">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#4F6E95"/>
+                                    <Style.Triggers>
+                                        <!-- 一个都没勾选：会处理全部，用警示色提醒一下，避免看漏 -->
+                                        <DataTrigger Binding="{Binding ScopeWarning}" Value="True">
+                                            <Setter Property="Foreground" Value="#C0392B"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="10,0"
+                                   Foreground="#8A94A6" TextTrimming="CharacterEllipsis"
+                                   Text="勾选列表左侧「参与」列的文件才会被处理；勾选变化后「预览」列会立刻按勾选范围重排序号"/>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <Button Content="全选" Command="{Binding CheckAllFilesCommand}" Width="60" Height="26" Margin="0,0,6,0"
+                                    ToolTip="勾选全部文件，让它们都参与处理"/>
+                            <Button Content="全不选" Command="{Binding UncheckAllFilesCommand}" Width="70" Height="26"
+                                    ToolTip="取消全部勾选。都不勾选时按「处理全部」执行（范围条上会写明）"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Grid>
+                <DataGrid x:Name="LocalFileGrid"
+                          ItemsSource="{Binding Files}"
+                          SelectedItem="{Binding SelectedFile}"
+                          PreviewMouseLeftButtonDown="LocalFileGrid_PreviewMouseLeftButtonDown"
+                          AllowDrop="True"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserResizeRows="False"
+                          CanUserSortColumns="True"
+                          CanUserResizeColumns="True"
+                          Sorting="LocalFileGrid_Sorting"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          RowHeaderWidth="0"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow">
+                    <!-- 列宽：拖表头分隔线即可调整，拖完自动存进 data\column-widths.json，下次启动照旧；
+                         双击分隔线按内容自适应。-「重置列宽为默认」是列被拖窄到看不见时唯一顺手的救命入口。
+                         星号列（2* / 3*）没被拖过就仍是星号，会跟着窗口一起伸缩，不会被这次改动锁死。 -->
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="重置列宽为默认" Click="ResetColumnWidths_Click"
+                                      ToolTip="恢复默认列宽，并清掉已保存的列宽记录（下次启动也是默认布局）"/>
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Style>
+                        <Style TargetType="DataGrid">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CurrentMode}" Value="Editor">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.Style>
+                    <DataGrid.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        </Style>
+                    </DataGrid.CellStyle>
+                    <DataGrid.Columns>
+                        <!-- 「原文件名」可点表头排序（点一次降序，再点升序）：
+                             SortMemberPath 只是给 Sorting 事件里的代码识别是哪一列（= 属性名），
+                             真正的排序在 VM 里做 —— 它会真的重排 Files 集合并重算预览里的序号，
+                             所以 Sorting 事件会 Handled=true 拦掉 DataGrid 自带的排序。
+                             「预览」是算出来的结果（含按勾选范围生成的序号），「状态」是图标，
+                             排它们没有意义，故 CanUserSort=False。 -->
+                        <!-- 「参与」复选框：只有勾选的文件才会被处理（默认全部勾选，所以旧用法不变）。
+                             点击由 LocalFileGrid_PreviewMouseLeftButtonDown 拦下并手动翻转，
+                             免得勾个选就把该行选中、进而把字幕文件切到编辑器。 -->
+                        <DataGridTemplateColumn Header="参与" Width="52" IsReadOnly="False" CanUserSort="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsChecked, UpdateSourceTrigger=PropertyChanged}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              ToolTip="勾选 = 参与本次处理；取消勾选 = 原样不动"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="原文件名" Width="2*" IsReadOnly="True"
+                                                CanUserSort="True" SortMemberPath="OriginalFileName">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Image Grid.Column="0" Style="{StaticResource RowIconStyle}"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding OriginalFileName}"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <!-- 「预览」只在勾选的行上显示新名字；未勾选的行留空（悬停说明原因），
+                             免得调一下规则那些行的预览也跟着变，看起来像它们也要被处理。 -->
+                        <DataGridTextColumn Header="预览" Binding="{Binding Preview}" Width="3*" IsReadOnly="True"
+                                            CanUserSort="False">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="VerticalAlignment" Value="Center"/>
+                                    <Setter Property="Background" Value="#EAF4FF"/>
+                                    <Setter Property="Padding" Value="4,2"/>
+                                    <Setter Property="ToolTip" Value="{Binding PreviewTip}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PreviewInScope}" Value="False">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                        <DataGridTemplateColumn Header="状态" Width="70" IsReadOnly="True" CanUserSort="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Border Width="18" Height="18" BorderThickness="1" CornerRadius="2" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="BorderBrush" Value="#D9D9D9"/>
+                                                    <Setter Property="Background" Value="#FAFAFA"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsProcessing}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="#1296DB"/>
+                                                            <Setter Property="Background" Value="#E6F7FF"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsSuccess}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="#52C41A"/>
+                                                            <Setter Property="Background" Value="#F6FFED"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsSuccess}" Value="False">
+                                                            <Setter Property="BorderBrush" Value="#FF696A"/>
+                                                            <Setter Property="Background" Value="#FFF1F0"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Viewbox Margin="2">
+                                                <Path Style="{StaticResource StatusIconPathStyle}"/>
+                                            </Viewbox>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <TextBox AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         FontFamily="Consolas, Microsoft YaHei"
+                         FontSize="13"
+                         Text="{Binding SelectedFile.Content, UpdateSourceTrigger=PropertyChanged}"
+                         BorderThickness="0,1,0,0"
+                         BorderBrush="#D9D9D9"
+                         Padding="4">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CurrentMode}" Value="Editor">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+
+                <!-- 115 网盘浏览：双击文件夹进入，单击/Ctrl/Shift 多选，
+                     按右侧功能栏规则改名；文件与文件夹需分开选择（不能同批改名） -->
+                <DockPanel Background="#FFFFFF"
+                           Visibility="{Binding N115.IsActive, Converter={StaticResource BoolToVis}}">
+                    <!-- 底部操作条，两行：上行是选择摘要 + 状态，下行是操作按钮。
+                         之所以拆两行 —— 三者挤在一行时，按钮要跟状态文字抢宽度：窗口窄一点，
+                         状态文字要么被压成一条缝、要么按钮（包括最右边的主按钮）被裁掉一角。
+                         拆开后状态文字独占一行、能完整显示，按钮那行也永远排得整齐。
+                         按钮用 WrapPanel：万一以后再加按钮 / 窗口极窄，是换行而不是被裁。 -->
+                    <Border x:Name="N115RenameBar"
+                            DockPanel.Dock="Bottom"
+                            Background="#F6FBFF"
+                            BorderBrush="#DCE9F7"
+                            BorderThickness="0,1,0,0"
+                            Padding="8,6"
+                            Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- 第 1 行：选择摘要（定宽、不省略）+ 状态文本（占满剩余、过长省略） -->
+                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontWeight="Bold"
+                                           ToolTip="单击选中一个；Ctrl + 单击多选；Shift + 单击连选。&#10;文件和文件夹需分开选，不能在同一次操作里一起改名。"
+                                           Foreground="#4F6E95" Text="{Binding N115.SelectionSummary}"/>
+                                <TextBlock VerticalAlignment="Center" Margin="10,0,0,0"
+                                           Foreground="#8A94A6" TextTrimming="CharacterEllipsis"
+                                           Text="{Binding N115.StatusText}"/>
+                            </DockPanel>
+
+                            <!-- 第 2 行：操作按钮。按「选择」与「改名」分两组，组间一条竖细线；
+                                 主按钮（按规则重命名）放最右，整排里唯一实心。 -->
+                            <WrapPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="加载更多" Command="{Binding N115.LoadMoreCommand}"
+                                        Style="{StaticResource BarButtonStyle}"
+                                        ToolTip="继续载入当前目录里还没显示出来的条目"/>
+
+                                <Border Style="{StaticResource BarGroupStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="只选文件" Command="{Binding N115.SelectFilesCommand}"
+                                                Style="{StaticResource BarButtonStyle}"
+                                                ToolTip="一键选中当前目录里的全部文件（不含文件夹）"/>
+                                        <Button Content="只选文件夹" Command="{Binding N115.SelectFoldersCommand}"
+                                                Style="{StaticResource BarButtonStyle}"
+                                                ToolTip="一键选中当前目录里的全部文件夹（不含文件）"/>
+                                        <Button Content="清除选择" Command="{Binding N115.ClearSelectionCommand}"
+                                                Style="{StaticResource BarButtonStyle}"
+                                                ToolTip="取消所有选中。只影响选择，不会改动网盘上的任何东西"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource BarGroupStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="撤销改名" Command="{Binding N115.UndoRenameCommand}"
+                                                Style="{StaticResource BarButtonStyle}"
+                                                ToolTip="撤销上一次改名，把名字改回去。&#10;可连续回退，一直到本次运行内改过的每一条都还原"/>
+                                        <Button Content="繁=&gt;简" Command="{Binding N115.ToSimplifiedCommand}"
+                                                Style="{StaticResource BarAccentButtonStyle}"
+                                                ToolTip="把选中条目名称里的繁体字转成简体（只改名字；网盘上的文件内容不会被读取或改写）。&#10;文件名与文件夹需分开选，不能同批处理。&#10;改错了点「撤销改名」可回退。"/>
+                                        <Button Content="{Binding N115.RenameButtonText}" Command="{Binding N115.RenameSelectedCommand}"
+                                                Style="{StaticResource BarPrimaryButtonStyle}"
+                                                ToolTip="按右侧功能栏的替换 / 序号 / 添加删除规则重命名。文件和文件夹需分开处理。"/>
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid>
+                    <DataGrid x:Name="N115Grid"
+                              ItemsSource="{Binding N115.Items}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserResizeRows="False"
+                              CanUserSortColumns="True"
+                              CanUserResizeColumns="True"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              RowHeaderWidth="0"
+                              SelectionMode="Extended"
+                              SelectionUnit="FullRow"
+                              IsReadOnly="True"
+                              Sorting="N115Grid_Sorting"
+                              SelectionChanged="N115Grid_SelectionChanged"
+                              PreviewMouseLeftButtonDown="N115Grid_PreviewMouseLeftButtonDown"
+                              MouseDoubleClick="N115Grid_MouseDoubleClick">
+                        <!-- 与本地列表同一套列宽记忆（落盘键不同：local / n115） -->
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="重置列宽为默认" Click="ResetColumnWidths_Click"
+                                          ToolTip="恢复默认列宽，并清掉已保存的列宽记录（下次启动也是默认布局）"/>
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
+                        <DataGrid.CellStyle>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            </Style>
+                        </DataGrid.CellStyle>
+
+                        <!-- 文件夹行铺一层浅蓝底色（像分组标题），文件行保持白底并缩进；
+                             首行「返回上级」是导航行，用灰白底和它们区分开 -->
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="Background" Value="White"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                        <Setter Property="Background" Value="#EAF4FF"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsParentEntry}" Value="True">
+                                        <Setter Property="Background" Value="#F1F4F8"/>
+                                    </DataTrigger>
+                                    <!-- 选中态放在最后，保证选中色能盖过文件夹/导航行底色 -->
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#CBE3FB"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+
+                        <DataGrid.Columns>
+                            <!-- 名称 / 类型 / 大小 / 修改时间 四列都可点表头排序（点一次降序，再点升序）。
+                                 SortMemberPath 只是给排序事件里的代码用来识别是哪一列；
+                                 真正的排序在 VM 里做（必须保证「文件夹置顶」和首行「返回上级」不被排乱），
+                                 所以 Sorting 事件会 Handled=true 拦掉 DataGrid 自带的排序。
+                                 「预览」列是算出来的结果，不参与排序（CanUserSort=False）。 -->
+                            <DataGridTemplateColumn Header="名称" Width="3*" IsReadOnly="True"
+                                                    CanUserSort="True" SortMemberPath="Name"
+                                                    SortDirection="Ascending">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid VerticalAlignment="Center">
+                                            <Grid.Style>
+                                                <Style TargetType="Grid">
+                                                    <Setter Property="Margin" Value="0"/>
+                                                    <Style.Triggers>
+                                                        <!-- 文件相对文件夹缩进，视觉上归到上方文件夹的分组里 -->
+                                                        <DataTrigger Binding="{Binding IsDirectory}" Value="False">
+                                                            <Setter Property="Margin" Value="26,0,0,0"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Grid.Style>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- 文件夹用闭合图标，被选中的文件夹换成打开图标；
+                                                 「返回上级」行没有图标，改用「↑」字形 -->
+                                            <Image Grid.Column="0">
+                                                <Image.Style>
+                                                    <Style TargetType="Image" BasedOn="{StaticResource RowIconStyle}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsParentEntry}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                            <MultiDataTrigger>
+                                                                <MultiDataTrigger.Conditions>
+                                                                    <Condition Binding="{Binding IsDirectory}" Value="True"/>
+                                                                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True"/>
+                                                                </MultiDataTrigger.Conditions>
+                                                                <Setter Property="Source" Value="{StaticResource IconFolderOpen}"/>
+                                                            </MultiDataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Image.Style>
+                                            </Image>
+
+                                            <TextBlock Grid.Column="0"
+                                                       Text="↑"
+                                                       Width="24"
+                                                       Margin="0,0,6,0"
+                                                       FontSize="17"
+                                                       FontWeight="Bold"
+                                                       Foreground="#5B7FA6"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Visibility="{Binding IsParentEntry, Converter={StaticResource BoolToVis}}"/>
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Name}"
+                                                       VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- 「预览」列：按右侧功能栏当前的替换 / 序号 / 添加删除规则算出的新名称。
+                                 改规则时整列实时跟着变，改名前进能看到「会改成什么样」。
+                                 显示分档：**选中的**才会真的改名（蓝字加粗=会变、灰字=算完不变、红字=参数不合法），
+                                 **没选中的**整格淡化（浅灰）—— 它们不参与本次改名。
+                                 长文件名会被裁切，鼠标悬停 ToolTip 显示「原名 → 新名」。 -->
+                            <DataGridTextColumn Header="预览" Binding="{Binding Preview}" Width="3*" IsReadOnly="True"
+                                                CanUserSort="False">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="Padding" Value="4,2"/>
+                                        <Setter Property="Foreground" Value="#8A94A6"/>
+                                        <Setter Property="ToolTip" Value="{Binding PreviewTip}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding PreviewChanged}" Value="True">
+                                                <Setter Property="Foreground" Value="#1666C8"/>
+                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding PreviewError}" Value="True">
+                                                <Setter Property="Foreground" Value="#C0392B"/>
+                                            </DataTrigger>
+                                            <!-- 放在最后：未选中优先级最高，一律淡化，不再显示蓝/红 -->
+                                            <DataTrigger Binding="{Binding InRenameScope}" Value="False">
+                                                <Setter Property="Foreground" Value="#BFC7D2"/>
+                                                <Setter Property="FontWeight" Value="Normal"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+
+                            <!-- 三列都要显式 VerticalAlignment=Center：DataGridTextColumn 生成的
+                                 TextBlock 默认会被拉伸到整行高，文字就贴在格子顶部了（用户反馈的现象） -->
+                            <DataGridTextColumn Header="类型" Binding="{Binding TypeText}" Width="80" IsReadOnly="True"
+                                                CanUserSort="True" SortMemberPath="Type">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        <Setter Property="Foreground" Value="#4A5560"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="大小" Binding="{Binding SizeText}" Width="100" IsReadOnly="True"
+                                                CanUserSort="True" SortMemberPath="Size">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="Foreground" Value="#4A5560"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="修改时间" Binding="{Binding UpdateTimeText}" Width="140" IsReadOnly="True"
+                                                CanUserSort="True" SortMemberPath="Time">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="Foreground" Value="#4A5560"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                        <!-- 空目录提示：避免“进去一片空白”被当成功能故障 -->
+                        <TextBlock Text="当前目录为空，没有文件或文件夹"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="#A6B0BC"
+                                   IsHitTestVisible="False"
+                                   Visibility="{Binding N115.IsEmpty, Converter={StaticResource BoolToVis}}"/>
+                    </Grid>
+                </DockPanel>
+                </Grid>
+            </DockPanel>
+        </GroupBox>
+
+        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+                <GroupBox Header="批量替换" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                    <Grid Margin="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="添加规则"
+                                    Command="{Binding AddRuleCommand}"
+                                    Width="88" Height="30"
+                                    Margin="0,0,6,0"
+                                    Background="#FFFFFF"
+                                    BorderBrush="#87B6EA"/>
+                            <Button Content="删除选中规则"
+                                    Command="{Binding RemoveRuleCommand}"
+                                    Width="108" Height="30"
+                                    Margin="0,0,6,0"
+                                    Background="#FFFFFF"
+                                    BorderBrush="#87B6EA"/>
+                            <Button Content="说明"
+                                    Click="ShowReplaceHelp_Click"
+                                    Width="68" Height="30"
+                                    ToolTip="查看批量替换里能用的通配符与变量（### / * / ? / {英文} / {数字} / {中文}…），弹窗里可一键复制"
+                                    Background="#F0F7FF"
+                                    BorderBrush="#87B6EA"/>
+                        </StackPanel>
+
+                        <ListBox Grid.Row="1"
+                                  ItemsSource="{Binding Rules}"
+                                  SelectedItem="{Binding SelectedRule}"
+                                  Background="Transparent"
+                                  BorderThickness="0"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0,0,0,8"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                    <Setter Property="BorderThickness" Value="1"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="ItemBorder"
+                                                        Background="{TemplateBinding Background}"
+                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                        BorderThickness="{TemplateBinding BorderThickness}">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ItemBorder" Property="Background" Value="#F5F9FF"/>
+                                                        <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#B7D7FF"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="ItemBorder" Property="Background" Value="#EAF3FF"/>
+                                                        <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#4A90E2"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderThickness="1" BorderBrush="#DDD" Padding="8" HorizontalAlignment="Stretch" MaxWidth="900">
+                                        <StackPanel>
+                                            <TextBlock Text="查找（Find）"/>
+                                            <TextBox Margin="0,4,0,8" Height="72"
+                                                     TextWrapping="Wrap" AcceptsReturn="True"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     Text="{Binding FindText, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                            <TextBlock Text="替换为（Replace）"/>
+                                            <TextBox Margin="0,4,0,0" Height="72"
+                                                     TextWrapping="Wrap" AcceptsReturn="True"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     Text="{Binding ReplaceText, UpdateSourceTrigger=PropertyChanged}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="批量序号" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#FFFFFF">
+                    <Grid Margin="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <!-- 模板输入框原本写死 340：功能区收窄后会把右边顶出边界，改成 * 自适应 -->
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="模板" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                        <TextBox Grid.Row="0" Grid.Column="1" Height="24" MinWidth="80" Margin="0,0,8,8" VerticalContentAlignment="Center" Text="{Binding SequenceTemplate, UpdateSourceTrigger=PropertyChanged}"/>
+
+                        <!-- 预设下拉原本写死 220，同样改成占满剩余宽度 -->
+                        <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="保存为模板" Height="24" Padding="8,0" Margin="0,0,6,0" Command="{Binding SaveSequenceTemplateCommand}"/>
+                            <TextBlock Grid.Column="1" Text="▶" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Grid.Column="2" Text="预设" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="3" Height="24" MinWidth="120" HorizontalAlignment="Stretch" ItemsSource="{Binding SequenceTemplatePresets}" SelectedItem="{Binding SelectedSequencePreset, Mode=TwoWay}"/>
+                        </Grid>
+
+                        <!-- 三个数字带微调按钮：窄到放不下时换行，而不是被硬裁 -->
+                        <WrapPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+                            <TextBlock Text="开始于" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <Grid Width="66" Height="26" Margin="0,0,10,0">
+                                <TextBox Height="26" Padding="6,0,20,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding SequenceStart, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Grid HorizontalAlignment="Right" Width="18" Height="26">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="13"/>
+                                        <RowDefinition Height="13"/>
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0" Content="▲" Style="{StaticResource SpinnerButtonStyle}" Click="AdjustNumber_Click" Tag="SeqStart:+1"/>
+                                    <Button Grid.Row="1" Content="▼" Style="{StaticResource SpinnerButtonStyle}" BorderThickness="0" Click="AdjustNumber_Click" Tag="SeqStart:-1"/>
+                                </Grid>
+                            </Grid>
+                            <TextBlock Text="增量" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <Grid Width="66" Height="26" Margin="0,0,10,0">
+                                <TextBox Height="26" Padding="6,0,20,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding SequenceStep, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Grid HorizontalAlignment="Right" Width="18" Height="26">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="13"/>
+                                        <RowDefinition Height="13"/>
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0" Content="▲" Style="{StaticResource SpinnerButtonStyle}" Click="AdjustNumber_Click" Tag="SeqStep:+1"/>
+                                    <Button Grid.Row="1" Content="▼" Style="{StaticResource SpinnerButtonStyle}" BorderThickness="0" Click="AdjustNumber_Click" Tag="SeqStep:-1"/>
+                                </Grid>
+                            </Grid>
+                            <TextBlock Text="位数" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <Grid Width="66" Height="26" Margin="0,0,0,0">
+                                <TextBox Height="26" Padding="6,0,20,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding SequenceDigits, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Grid HorizontalAlignment="Right" Width="18" Height="26">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="13"/>
+                                        <RowDefinition Height="13"/>
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0" Content="▲" Style="{StaticResource SpinnerButtonStyle}" Click="AdjustNumber_Click" Tag="SeqDigits:+1"/>
+                                    <Button Grid.Row="1" Content="▼" Style="{StaticResource SpinnerButtonStyle}" BorderThickness="0" Click="AdjustNumber_Click" Tag="SeqDigits:-1"/>
+                                </Grid>
+                            </Grid>
+                        </WrapPanel>
+
+                        <!-- 原来这两条 StackPanel 都放在 Row=3 的同一个单元格里（一条靠左一条靠右）。
+                             功能区收窄后会被压到互相重叠，所以把按钮挪到独立的 Row=4。 -->
+                        <WrapPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" VerticalAlignment="Center">
+                            <CheckBox Content="不足位补齐" VerticalAlignment="Center" IsChecked="{Binding SequencePadEnabled}" Margin="0,0,10,0"/>
+                            <CheckBox Content="字母编码" VerticalAlignment="Center" IsChecked="{Binding SequenceAlphabetic}" Margin="0,0,10,0"/>
+                            <CheckBox Content="字母大写" VerticalAlignment="Center" IsChecked="{Binding SequenceUppercase}"/>
+                        </WrapPanel>
+
+                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                                    HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <Button Content="变量说明" Width="68" Height="24" Margin="0,0,8,0" Click="SequenceVariables_Click"
+                                    ToolTip="查看模板里能用的变量（原名称 / 序号 / 修改日期 / 文件类型…），弹窗里可一键复制"/>
+                            <!-- 开始/撤销双路由：网盘模式（N115.IsActive）作用于网盘选中项，本地模式作用于本地列表 -->
+                            <Button Content="撤销" Width="68" Height="24" Margin="0,0,8,0">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Command" Value="{Binding UndoSequenceCommand}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                <Setter Property="Command" Value="{Binding N115.UndoRenameCommand}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="开始" Width="68" Height="24" Background="#1890FF" Foreground="White">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Command" Value="{Binding RunReplaceOnlyCommand}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                <Setter Property="Command" Value="{Binding N115.RenameSelectedCommand}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="添加/删除（文件名）" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="添加" Margin="0,0,0,10">
+                            <Grid Margin="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <!-- 两个输入框原本各写死 100，改成 * + MinWidth：收窄时一起变窄，不会被顶出边界 -->
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*" MinWidth="70"/>
+                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*" MinWidth="70"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="文件名前添加" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" Height="24" Margin="0,0,0,8" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNamePrefixAdd, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <TextBlock Grid.Row="0" Grid.Column="3" Text="文件名后添加" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                                <TextBox Grid.Row="0" Grid.Column="4" Height="24" Margin="0,0,0,8" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameSuffixAdd, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="定位文字" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" Height="24" Margin="0,0,0,8" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameAddAnchor, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <Grid Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="2" VerticalAlignment="Center" Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*" MinWidth="60"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <RadioButton Grid.Column="0" GroupName="AddPos" Content="前" IsChecked="{Binding FileNameAddBeforeAnchor}"
+                                                 Height="24" VerticalContentAlignment="Center" Margin="0,0,8,0"/>
+                                    <RadioButton Grid.Column="1" GroupName="AddPos" Content="后" IsChecked="{Binding FileNameAddAfterAnchor}"
+                                                 Height="24" VerticalContentAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Column="2" Text="添加" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="3" Height="24" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameAddContent, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,2,0,0">
+                                    <Button Content="撤销" Width="68" Height="24" Margin="0,0,8,0">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Command" Value="{Binding UndoAddCommand}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                        <Setter Property="Command" Value="{Binding N115.UndoRenameCommand}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <Button Content="开始" Width="68" Height="24" Background="#1890FF" Foreground="White">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Command" Value="{Binding RunReplaceOnlyCommand}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                        <Setter Property="Command" Value="{Binding N115.RenameSelectedCommand}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="删除">
+                            <Grid Margin="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="删除文件名中的" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" Height="24" MinWidth="90" Margin="0,0,0,8" HorizontalAlignment="Stretch" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameDeleteAnchor, UpdateSourceTrigger=PropertyChanged}"/>
+
+                                <!-- 这一行原本是 492px 宽的单行 StackPanel，功能区收窄后一定被裁。
+                                     改成 WrapPanel：宽的时候一行摆完，窄的时候在「共删除」后换行（语义不打断）。 -->
+                                <WrapPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                        <TextBlock Text="从" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBox Width="70" Height="24" Margin="0,0,12,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameDeleteAnchor, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <TextBlock Text="或" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <Grid Width="58" Height="26" Margin="0,0,8,0">
+                                            <TextBox Height="26" Padding="6,0,20,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameDeleteStartIndex, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <Grid HorizontalAlignment="Right" Width="18" Height="26">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="13"/>
+                                                    <RowDefinition Height="13"/>
+                                                </Grid.RowDefinitions>
+                                                <Button Grid.Row="0" Content="▲" Style="{StaticResource SpinnerButtonStyle}" Click="AdjustNumber_Click" Tag="Start:+1"/>
+                                                <Button Grid.Row="1" Content="▼" Style="{StaticResource SpinnerButtonStyle}" BorderThickness="0" Click="AdjustNumber_Click" Tag="Start:-1"/>
+                                            </Grid>
+                                        </Grid>
+                                        <TextBlock Text="个字符开始，共删除" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                        <Grid Width="58" Height="26" Margin="0,0,8,0">
+                                            <TextBox Height="26" Padding="6,0,20,0" TextAlignment="Left" VerticalContentAlignment="Center" Text="{Binding FileNameDeleteCount, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <Grid HorizontalAlignment="Right" Width="18" Height="26">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="13"/>
+                                                    <RowDefinition Height="13"/>
+                                                </Grid.RowDefinitions>
+                                                <Button Grid.Row="0" Content="▲" Style="{StaticResource SpinnerButtonStyle}" Click="AdjustNumber_Click" Tag="Count:+1"/>
+                                                <Button Grid.Row="1" Content="▼" Style="{StaticResource SpinnerButtonStyle}" BorderThickness="0" Click="AdjustNumber_Click" Tag="Count:-1"/>
+                                            </Grid>
+                                        </Grid>
+                                        <CheckBox Content="前" IsChecked="{Binding FileNameDeleteByAnchorEnabled}" Margin="0,0,8,0"/>
+                                        <CheckBox Content="后" IsChecked="{Binding FileNameDeleteAfterAnchor}"/>
+                                    </StackPanel>
+                                </WrapPanel>
+
+                                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,2,0,0">
+                                    <Button Content="撤销" Width="68" Height="24" Margin="0,0,8,0">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Command" Value="{Binding UndoDeleteCommand}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                        <Setter Property="Command" Value="{Binding N115.UndoRenameCommand}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <Button Content="开始" Width="68" Height="24" Background="#1890FF" Foreground="White">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <Setter Property="Command" Value="{Binding RunReplaceOnlyCommand}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding N115.IsActive}" Value="True">
+                                                        <Setter Property="Command" Value="{Binding N115.RenameSelectedCommand}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="批量删除行" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#FFFFFF">
+                    <StackPanel Margin="8">
+                        <CheckBox Content="启用：删除指定行范围（含起止行）" IsChecked="{Binding DeleteLinesEnabled}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock Text="起始行" VerticalAlignment="Center"/>
+                            <TextBox Width="80" Margin="8,0,20,0" Text="{Binding DeleteStartLine}"/>
+                            <TextBlock Text="结束行" VerticalAlignment="Center"/>
+                            <TextBox Width="80" Margin="8,0,0,0" Text="{Binding DeleteEndLine}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="删除语言字幕" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                    <StackPanel Margin="8">
+                        <CheckBox Content="删除英文（EN）" IsChecked="{Binding RemoveEnglish}"/>
+                        <CheckBox Content="删除日文（JP，按平/片假名识别）" IsChecked="{Binding RemoveJapanese}" Margin="0,4,0,0"/>
+                        <CheckBox Content="删除韩文（KR）" IsChecked="{Binding RemoveKorean}" Margin="0,4,0,0"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <Button Content="开始处理" Width="80" Height="24" Background="#1890FF" Foreground="White"
+                                    Command="{Binding RunLanguageOnlyCommand}"
+                                    ToolTip="只做一件事：按上面勾选的语言过滤字幕正文并写回文件。&#10;只作用于 .srt / .ass / .txt，不改名、不套用替换规则。"/>
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- 处理方式（原「输出方式」分组框压成一行）：覆盖原文件 或 输出到目录 + 备份开关。
+                     位置不变（仍在底部操作行上方），只是不再占一整个分组框。 -->
+                <Border x:Name="OutputModeBar" Margin="0,0,0,10" Padding="8,6"
+                        Background="#EEF7FF" BorderBrush="#CFE3FA" BorderThickness="1" CornerRadius="4">
+                    <StackPanel>
+                        <WrapPanel>
+                            <TextBlock Text="处理方式" VerticalAlignment="Center" FontWeight="Bold"
+                                       Foreground="#4F6E95" Margin="0,0,8,0"/>
+                            <CheckBox Content="覆盖原文件" IsChecked="{Binding InPlace}" VerticalAlignment="Center"
+                                      Margin="0,0,16,0"
+                                      ToolTip="勾选 = 直接改原文件（文件名按规则改，内容就地写回）&#10;不勾选 = 处理结果输出到下面指定的目录，原文件保留"/>
+                            <CheckBox Content="覆盖时创建 .bak 备份" IsChecked="{Binding MakeBackup}" VerticalAlignment="Center"
+                                      ToolTip="覆盖前先留一份 原文件名.bak，改错了还能找回"/>
+                        </WrapPanel>
+
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- 覆盖模式下不需要目录：置灰并提示，避免误以为还能输出到别处 -->
+                            <TextBox Grid.Column="0" Height="24" VerticalContentAlignment="Center"
+                                     Text="{Binding OutputDirectory}">
+                                <TextBox.Style>
+                                    <Style TargetType="TextBox">
+                                        <Setter Property="IsEnabled" Value="True"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding InPlace}" Value="True">
+                                                <Setter Property="IsEnabled" Value="False"/>
+                                                <Setter Property="Opacity" Value="0.55"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBox.Style>
+                            </TextBox>
+
+                            <Button Grid.Column="1" Content="选择目录" Width="76" Height="24" Margin="6,0,0,0"
+                                    Click="ChooseOutput_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Background" Value="#1890FF"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding InPlace}" Value="True">
+                                                <Setter Property="IsEnabled" Value="False"/>
+                                                <Setter Property="Opacity" Value="0.55"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <WrapPanel Margin="0,0,0,10">
+                    <Button Content="开始处理" Width="80" Height="28" Background="#1890FF" Foreground="White" Command="{Binding RunCommand}" Margin="0,0,6,6"/>
+                    <Button Content="批量处理" Width="80" Height="28" Background="#52C41A" Foreground="Black" Command="{Binding RunReplaceOnlyCommand}" Margin="0,0,6,6"/>
+                    <Button Content="日志" Width="60" Height="28" Background="#FA8C16" Foreground="Black" Click="ShowLogs_Click" Margin="0,0,6,6"/>
+                    <Button Content="检查更新" Width="80" Height="28" Click="CheckUpdate_Click" Margin="0,0,0,6"/>
+                </WrapPanel>
+            </StackPanel>
+        </ScrollViewer>
+        </Grid>
+    </Grid>
+</Window>

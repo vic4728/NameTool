@@ -1,0 +1,26 @@
+# 编译产物
+bin/
+obj/
+publish/
+
+# 用户数据 / 凭据（绝不能进仓库）
+data/
+publish/data/
+*_account.json
+*.log
+log*.txt
+build_check.log
+
+# 本地工作区文件
+.workbuddy/
+_ssh.params
+*.user
+.vs/
+
+# 临时
+*.bak
+~$*
+
+# 本地杂物（不入库）
+新建文本文档.txt
+统计后台.url

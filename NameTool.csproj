@@ -1,0 +1,71 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NameTool</AssemblyName>
+    <RootNamespace>NameTool</RootNamespace>
+
+    <!-- 版本号：只需维护此处 Version，其它版本信息自动同步 -->
+    <Version>1.9.10</Version>
+    <AssemblyVersion>$(Version)</AssemblyVersion>
+    <FileVersion>$(Version)</FileVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <!-- 父级仓库 E:\Visual\.git 会让 SDK 把提交哈希追加到 ProductVersion，
+         导致安装包被命名为 NameTool_v1.3.5+<sha>_Setup.exe，必须关掉 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- 图标：程序、编译产物使用统一 ico -->
+    <ApplicationIcon>Images\logo-2-1.ico</ApplicationIcon>
+
+    <!-- 国内镜像源不提供漏洞库数据，开着审计只会刷 NU1900 警告，直接关掉 -->
+    <NuGetAudit>false</NuGetAudit>
+
+    <!-- WebView2 包会带出 3 个 .xml 文档文件；不拦掉它们会跟着发布目录一起散落，
+         破坏「绿色单 EXE + data」的形态（安装脚本会把它们一起打包） -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Images\logo-2-1.ico" />
+  </ItemGroup>
+
+  <!-- 「繁=>简」词典（HanLP tc/t2s 为主 + OpenCC 补缺，约 4800 条 / 45KB）。
+       用 EmbeddedResource 而不是 Content，是为了不散落到 publish 目录 ——
+       NameToolSetup.iss 是 Source: {#PublishDir}\* 全打包，散落文件会一起进安装包。
+       注意：SDK 默认只把 *.resx 当 EmbeddedResource，.txt 必须显式声明。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\t2s-dict.txt" />
+  </ItemGroup>
+
+  <!-- 内嵌浏览器（网页登录授权）：使用系统已安装的 WebView2 运行时，不随包分发运行时 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- 发布时生效：单文件 + 自包含 + win-x64 -->
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishDir>E:\Visual\NameTool\publish</PublishDir>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- 把 WPF 原生依赖（wpfgfx/PresentationNative/PenImc/D3DCompiler/vcruntime）打进单文件，
+         否则它们会散落在 publish 目录，破坏「绿色单 EXE」形态 -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- 发布完成后清理历史版本化 EXE（安装目录内主程序固定为 NameTool.exe） -->
+  <Target Name="RenamePublishedExe" AfterTargets="Publish">
+    <ItemGroup>
+      <LegacyVersionedExe Include="$(PublishDir)NameTool_v*.exe" />
+    </ItemGroup>
+
+    <Delete Files="@(LegacyVersionedExe)" />
+  </Target>
+</Project>

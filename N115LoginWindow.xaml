@@ -1,0 +1,214 @@
+<Window x:Class="NameTool.N115LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="115 网盘登录授权"
+        Width="940" Height="780"
+        MinWidth="720" MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontSize="12"
+        Background="#F4F8FC">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C9DDF4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#F2F8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E8F2FF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TabControl x:Name="Tabs" Grid.Row="0" Background="White" BorderBrush="#CFE0F2"
+                    SelectionChanged="Tabs_SelectionChanged">
+
+            <!-- ============ 1. 网页登录（默认，优先使用） ============ -->
+            <TabItem x:Name="WebTab" Header="网页登录（推荐）">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" TextWrapping="Wrap" Foreground="#4F6E95" LineHeight="19"
+                               Text="在下面的页面里登录 115：用手机 App 扫页面上的二维码并在手机上确认，或点页面上的「使用账号登录」用账号密码 / 短信登录。程序会把页面上的二维码同步成与本程序「扫码登录」同源的那一张，并在上面的状态行实时显示页面的登录状态；登录成功后自动读取凭据完成授权，不需要手动复制 Cookie。凭据只保存在本机。"/>
+
+                    <Grid Grid.Row="1" Margin="0,10,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock x:Name="WebStatusText"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   FontWeight="Bold"
+                                   TextWrapping="Wrap"
+                                   Foreground="#4F6E95"
+                                   Text="正在启动内嵌浏览器..."/>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="RetryWebButton" Content="重新加载" Width="84" Height="28" Margin="0,0,6,0"
+                                    Click="ReloadWeb_Click"/>
+                            <Button x:Name="DetectButton" Content="检测凭据" Width="84" Height="28" Margin="0,0,6,0"
+                                    ToolTip="如果页面已经登录但没自动识别，点这里强制检测一次"
+                                    Click="DetectCookie_Click"/>
+                            <Button Content="换账号" Width="72" Height="28"
+                                    ToolTip="清除内嵌浏览器里已保存的 115 登录状态，重新登录"
+                                    Click="SwitchAccount_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="2" BorderBrush="#CFE0F2" BorderThickness="1" CornerRadius="6">
+                        <Grid>
+                            <wv2:WebView2 x:Name="Web"/>
+
+                            <Border x:Name="WebFallbackPanel"
+                                    Background="#FFFFFF"
+                                    Visibility="Collapsed">
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460">
+                                    <TextBlock x:Name="WebFallbackText"
+                                               TextWrapping="Wrap"
+                                               TextAlignment="Center"
+                                               Foreground="#8A4B4B"
+                                               Text="内嵌浏览器不可用。"/>
+                                    <Button Content="改用扫码登录" Width="132" Height="30" Margin="0,16,0,0"
+                                            HorizontalAlignment="Center"
+                                            Click="GoToQrTab_Click"/>
+                                    <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" TextAlignment="Center" Foreground="#999"
+                                               Text="如果内嵌浏览器一直起不来，请确认系统已安装「Microsoft Edge WebView2 Runtime」（Win10/11 通常自带）。"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 2. 扫码登录 ============ -->
+            <TabItem x:Name="QrTab" Header="扫码登录">
+                <Grid Margin="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               TextWrapping="Wrap"
+                               Foreground="#4F6E95"
+                               Text="用手机上的「115」App 扫描下面的二维码，并在手机上点击「确认登录」。登录凭据只保存在本机。"/>
+
+                    <Border Grid.Row="1"
+                            Width="256" Height="256" Margin="0,14"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Background="White"
+                            BorderBrush="#CFE0F2"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <Image x:Name="QrImage" Margin="8" Stretch="Uniform"/>
+                    </Border>
+
+                    <TextBlock x:Name="QrStatusText"
+                               Grid.Row="2"
+                               HorizontalAlignment="Center"
+                               FontSize="13"
+                               FontWeight="Bold"
+                               Foreground="#4F6E95"
+                               Text="切换到本页签后自动获取二维码"/>
+
+                    <StackPanel Grid.Row="3"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                Margin="0,16,0,0">
+                        <Button x:Name="RefreshQrButton" Content="刷新二维码" Width="104" Height="30" Margin="0,0,8,0" Click="RefreshQr_Click"/>
+                        <Button Content="打开 115 网页" Width="112" Height="30" Click="OpenWeb_Click"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 3. 手动填 Cookie（兜底） ============ -->
+            <TabItem Header="手动填 Cookie">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16">
+                        <TextBlock TextWrapping="Wrap" Foreground="#4F6E95"
+                                   Text="内嵌浏览器和扫码都用不了时的兜底方式：在系统浏览器登录 115，再把 Cookie 复制过来。"/>
+
+                        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#666" LineHeight="20">
+                            <Run Text="1. 点下面的按钮，在浏览器里打开并登录 115"/><LineBreak/>
+                            <Run Text="2. 按 F12 → Network（网络）→ 刷新页面 → 点第一个请求"/><LineBreak/>
+                            <Run Text="3. 在 Request Headers 里找到 Cookie 一行，整行复制"/><LineBreak/>
+                            <Run Text="4. 粘贴到下面的输入框，点「使用 Cookie 登录」"/>
+                        </TextBlock>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button Content="打开 115 网页登录" Width="152" Height="30" Margin="0,0,8,0" Click="OpenWeb_Click"/>
+                            <Button Content="从剪贴板粘贴" Width="120" Height="30" Click="PasteCookie_Click"/>
+                        </StackPanel>
+
+                        <TextBlock Text="Cookie（需包含 UID / CID / SEID）" Margin="0,18,0,4"/>
+                        <TextBox x:Name="CookieTextBox"
+                                 Height="150"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas, Microsoft YaHei"
+                                 Padding="6"
+                                 TextChanged="CookieTextBox_TextChanged"/>
+
+                        <Button x:Name="UseCookieButton"
+                                Content="使用 Cookie 登录"
+                                Width="152" Height="30"
+                                HorizontalAlignment="Left"
+                                Margin="0,12,0,0"
+                                Background="#1890FF"
+                                Foreground="White"
+                                BorderBrush="#1890FF"
+                                IsEnabled="False"
+                                Click="UseCookie_Click"/>
+
+                        <TextBlock Margin="0,16,0,0" TextWrapping="Wrap" Foreground="#999"
+                                   Text="提示：Cookie 等同于账号密码，请勿外传。本程序只把它保存在本机的 data\115-account.json 里，不会上传到任何服务器。"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="取消" Width="88" Height="30" Click="Cancel_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

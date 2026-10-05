@@ -1,0 +1,224 @@
+<Window x:Class="NameTool.N115FolderPickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:infra="clr-namespace:NameTool.Infrastructure"
+        Title="选择目标文件夹"
+        Width="600" Height="620"
+        MinWidth="460" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontSize="12"
+        Background="#F4F8FC">
+
+    <Window.Resources>
+        <infra:IconLookupConverter x:Key="IconLookup"/>
+
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C9DDF4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#F2F8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#E8F2FF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 主操作按钮：与主窗口的「重命名」同色，一眼看出是确认动作 -->
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#1890FF"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#1890FF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PrimaryBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PrimaryBorder" Property="Background" Value="#3AA0FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PrimaryBorder" Property="Background" Value="#0F7AE0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="PrimaryBorder" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 路径栏里的目录名：纯文字链接（不带边框底色），点击即跳到那一层。
+             与主窗口面包屑同款观感，所以照抄那份样式。
+             ⚠️ 必须自带模板 —— 本窗口的隐式 Button 样式会画出白底浅蓝边框，
+             放在路径栏里会变成一排小按钮，不是"路径"该有的样子。 -->
+        <Style x:Key="CrumbLinkStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="#1A6FD4"/>
+            <Setter Property="Padding" Value="2,1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderThickness="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#F5821F"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#9AA6B2"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="IntroText" Grid.Row="0" TextWrapping="Wrap" Foreground="#4F6E95" LineHeight="19"
+                   Text="在下面逐层进入目标文件夹。双击文件夹进入下一级；点上方路径里的任意一节可以直接跳到那一层；底部的「确定」表示放到当前所在的那一层。"/>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+            <Button x:Name="UpButton" Content="↑ 返回上级" Width="92" Height="28" Margin="0,0,6,0" Click="Up_Click"/>
+            <Button x:Name="RootButton" Content="根目录" Width="66" Height="28" Margin="0,0,6,0" Click="Root_Click"/>
+            <Button x:Name="RefreshButton" Content="刷新" Width="60" Height="28" Click="Refresh_Click"/>
+        </StackPanel>
+
+        <!-- 当前路径：可点击的面包屑。点任意一节直接跳到那一层（不用逐层点「返回上级」）；
+             记忆生效时右侧标出「上次使用的位置」，免得用户疑惑为什么不是从当前目录开始。 -->
+        <Border Grid.Row="2" Margin="0,8,0,0"
+                Background="#F6FBFF" BorderBrush="#DCE9F7" BorderThickness="1"
+                CornerRadius="4" Padding="8,3">
+            <DockPanel>
+                <TextBlock x:Name="RememberHint" DockPanel.Dock="Right" VerticalAlignment="Center"
+                           Margin="10,0,0,0" Foreground="#C77B0A" Visibility="Collapsed"
+                           Text="（上次使用的位置）"
+                           ToolTip="本次直接回到了上次用过的目标目录。&#10;点路径上的任意一节可以跳回去；也可以直接在这里「确定」。"/>
+                <ScrollViewer x:Name="PathScroll"
+                              VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="PathCrumbs">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&gt;" VerticalAlignment="Center" Margin="4,0,4,0"
+                                               Foreground="#8A94A6" FontWeight="Bold"
+                                               Visibility="{Binding ShowSeparator, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Style="{StaticResource CrumbLinkStyle}"
+                                            Height="22" Content="{Binding Name}"
+                                            Click="Crumb_Click"
+                                            ToolTip="点击跳到这一层目录"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="3" Margin="0,8,0,0"
+                Background="#FFFFFF" BorderBrush="#DCE9F7" BorderThickness="1" CornerRadius="4">
+            <Grid>
+                <ListBox x:Name="FolderList"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         SelectionMode="Single"
+                         MouseDoubleClick="FolderList_MouseDoubleClick">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Height="26">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Image Grid.Column="0" Width="20" Height="20" Stretch="Uniform"
+                                       VerticalAlignment="Center" Margin="0,0,6,0"
+                                       Source="{Binding IconKey, Converter={StaticResource IconLookup}}"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock x:Name="EmptyText"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           FontSize="13" Foreground="#A6B0BC" IsHitTestVisible="False"
+                           Visibility="Collapsed"
+                           Text="该目录下没有子文件夹"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="4" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" Foreground="#8A94A6" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="TargetText" Foreground="#2E6DA4" FontWeight="Bold" Margin="0,3,0,0"
+                           TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="取消" Width="72" Height="30" Margin="0,0,8,0" Click="Cancel_Click"/>
+                <!-- 文案保持简短（就一个「确定」）：目标目录名已经在**上方路径栏**和左侧的
+                     「目标：…」里显示了，按钮里再写一遍是重复，长目录名还会把按钮撑得很宽。
+                     MinWidth 是为了文案变短后按钮别缩成一团 —— 与「取消」的视觉重量要相当。 -->
+                <Button x:Name="ConfirmButton" Style="{StaticResource PrimaryButtonStyle}"
+                        MinWidth="88" Height="30" Click="Confirm_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

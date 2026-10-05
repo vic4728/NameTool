@@ -1,0 +1,33 @@
+<Window x:Class="NameTool.LogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="日志" Height="480" Width="860"
+        MinHeight="320" MinWidth="520">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- SelectionMode=Extended：可 Ctrl/Shift 多选行；容器样式去掉默认蓝底，选中行只是淡高亮 -->
+        <ListBox x:Name="LogList"
+                 Grid.Row="0"
+                 ItemsSource="{Binding Logs}"
+                 SelectionMode="Extended"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </ListBox>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <!-- 用户反馈：日志内容无法选择复制（排障时要把 [FAIL] 行发出来）。两条路都给：
+                 选中行复制 / 整份日志复制，失败原因一并弹回主窗口日志。 -->
+            <Button Content="复制选中行" Width="96" Margin="0,0,8,0" Click="CopySelected_Click"/>
+            <Button Content="复制全部" Width="88" Margin="0,0,8,0" Click="CopyAll_Click"/>
+            <Button Content="关闭" Width="88" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
