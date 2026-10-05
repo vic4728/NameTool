@@ -47,6 +47,10 @@
             <Setter Property="Source" Value="{Binding IconKey, Converter={StaticResource IconLookup}}"/>
         </Style>
 
+        <!-- 编辑图标（铅笔）：几何数据来自 Assets/Edit-ico.svg（WPF 不能直接渲染 SVG，
+             故把 path 数据抄成 Geometry 用 Path 绘制，两处保持一致）。24×24 视图。 -->
+        <Geometry x:Key="EditIconGeometry">M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z</Geometry>
+
         <Style TargetType="Button">
             <Setter Property="Background" Value="#FFFFFF"/>
             <Setter Property="BorderBrush" Value="#C9DDF4"/>
@@ -266,7 +270,9 @@
                                     <ContentPresenter ContentSource="Header" Margin="10,0" VerticalAlignment="Center"/>
                                 </Border>
 
-                                <ContentPresenter Grid.Row="1" Margin="8"/>
+                                <!-- ⚠️ BodyPresenter 这个名字被「分组展开/收起」功能按 Template.FindName 查找，
+                                     收起 = 把它整个 Collapsed（连带 Margin=8 一起消失，不留白缝）。别改名。 -->
+                                <ContentPresenter x:Name="BodyPresenter" Grid.Row="1" Margin="8"/>
                             </Grid>
                         </Border>
                     </ControlTemplate>
@@ -341,7 +347,16 @@
                 </Grid.ColumnDefinitions>
 
                 <Image Grid.Column="0" Width="16" Height="16" Margin="8,0,2,0" VerticalAlignment="Center" Source="/Images/logo-2-1.ico"/>
-                <TextBlock x:Name="TitleText" Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center" FontSize="13" Foreground="#333" Text="NameTool"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0,0,0">
+                    <TextBlock x:Name="TitleText" VerticalAlignment="Center" FontSize="15" Foreground="#333" Text="NameTool"/>
+                    <!-- 版本号胶囊：紧凑（高 17 / 字号 11 / 左右 6），主题蓝底白字 -->
+                    <Border x:Name="VersionPill" Height="17" CornerRadius="8.5" Background="#1890FF"
+                            VerticalAlignment="Center" Margin="6,0,0,0" Padding="6,0">
+                        <TextBlock x:Name="VersionPillText" Text="v0.0.0" FontSize="11" FontWeight="Bold"
+                                   Foreground="#FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="By Vic4728" Margin="7,0,0,0" VerticalAlignment="Center" FontSize="13" Foreground="#8A94A6"/>
+                </StackPanel>
 
                 <TextBlock x:Name="UpdateNoticeText"
                            Grid.Column="2"
@@ -400,7 +415,7 @@
                     <TextBlock HorizontalAlignment="Center"
                                FontWeight="Bold"
                                Foreground="#1890FF"
-                               Text="松开鼠标即可添加文件（任意格式，可直接拖入文件夹；.srt / .ass / .txt 可编辑内容）"/>
+                               Text="松开鼠标即可添加文件（任意格式，可直接拖入文件夹；文本类文件可编辑内容）"/>
                 </Border>
 
                 <!-- 本地文件工具栏：只在「本地 + 列表模式」显示。
@@ -424,14 +439,16 @@
                     </StackPanel.Style>
                     <Button Content="添加文件..." Click="AddFiles_Click" Width="92" Height="30" Margin="0,0,6,0"/>
                     <Button Content="添加文件夹..." Click="AddFolder_Click" Width="98" Height="30" Margin="0,0,6,0"/>
-                    <Button Content="移除选中" Command="{Binding RemoveSelectedFileCommand}" Width="86" Height="30" Margin="0,0,6,0"/>
-                    <Button Content="清空" Command="{Binding ClearFilesCommand}" Width="72" Height="30" Margin="0,0,6,0" BorderBrush="#9EC5F8"/>
+                    <Button Content="移除" Click="RemoveFiles_Click" Width="72" Height="30" Margin="0,0,6,0"
+                            Foreground="#D62828" BorderBrush="#D62828"
+                            ToolTip="把列表中选中的文件移出列表（不删除文件本体）。&#10;可按住 Ctrl / Shift 多选；选中后按 Delete 键同样可移除。"/>
+                    <Button Content="清空" Command="{Binding ClearFilesCommand}" Width="72" Height="30" Margin="0,0,6,0" Foreground="#FA8C16" BorderBrush="#FA8C16"/>
                     <Button Content="115网盘" Click="OpenN115_Click" Width="86" Height="30" Margin="0,0,6,0"
                             Background="#EAF4FF" BorderBrush="#87B6EA" FontWeight="Bold"/>
                     <!-- 繁=>简双路由：网盘模式转网盘选中项名称，本地模式转本地文件 -->
                     <Button Content="繁=&gt;简" Width="76" Height="30" Margin="0,0,6,0"
                             Background="#FFF3E8" BorderBrush="#EBC79A"
-                            ToolTip="把文件名（网盘模式下为选中条目名）里的繁体字转成简体。&#10;· 本地模式：.srt / .ass / .txt 会改写正文，其它格式只改文件名&#10;· 只处理勾选的文件 / 网盘选中的条目（一个都没选中则本地处理全部）&#10;· 字幕正文写回前会留 .bak（若已勾选备份）；文件名可点「撤销」回退">
+                            ToolTip="把文件名（网盘模式下为选中条目名）里的繁体字转成简体。&#10;· 本地模式：文本 / 字幕内容会改写正文（写回前留 .bak 备份），二进制文件只改文件名&#10;· 只处理勾选的文件 / 网盘选中的条目（一个都没选中则本地处理全部）&#10;· 文件名可点「撤销」回退">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                 <Setter Property="Command" Value="{Binding RunToSimplifiedCommand}"/>
@@ -465,7 +482,8 @@
                             </Style.Triggers>
                         </Style>
                     </Border.Style>
-                    <StackPanel Orientation="Horizontal">
+                    <!-- WrapPanel 而不是 StackPanel：左栏收窄时编码下拉自动换行，而不是把尾部元素硬裁掉 -->
+                    <WrapPanel>
                         <Button Content="← 返回列表"
                                 Command="{Binding ReturnToListCommand}"
                                 Style="{StaticResource OrangeButtonStyle}"
@@ -475,22 +493,33 @@
                                 Command="{Binding SaveSubtitleCommand}"
                                 Width="72" Height="28" Margin="0,0,6,0"
                                 Background="#1890FF" Foreground="White"
-                                ToolTip="把编辑器里的内容原样写回这个文件（保持原编码），不套用右侧任何规则。"/>
+                                ToolTip="把编辑器里的内容原样写回这个文件（沿用当前编码，编码转换后即为转换后的编码），不套用右侧任何规则。"/>
                         <Button Content="另存为…"
                                 Click="SaveSubtitleAs_Click"
                                 Width="86" Height="28" Margin="0,0,12,0"
                                 ToolTip="把编辑器里的内容另存为另一个文件，原文件不动。"/>
-                        <TextBlock Text="{Binding SelectedFile.OriginalFileName}"
-                                   VerticalAlignment="Center" FontWeight="Bold" MaxWidth="200"
-                                   Foreground="#8A5A1E" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="编码：" VerticalAlignment="Center" Foreground="#8A5A1E"/>
+                        <ComboBox ItemsSource="{Binding EncodingChoices}"
+                                  SelectedItem="{Binding SelectedEncodingChoice}"
+                                  Width="150" Height="26" Margin="0,0,12,0"
+                                  VerticalContentAlignment="Center"
+                                  ToolTip="把当前字幕转换成所选编码后保存（内容不变，只改编码）。
+选 GB2312 时若有生僻字装不下会提示取消，可改用 GBK / GB18030。
+之后点「保存」会自动沿用转换后的编码，状态栏会显示实际落盘的编码。"/>
                         <TextBlock Text="{Binding EditorStatusText}"
-                                   VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="190"
+                                   VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="260"
                                    Foreground="#1D7A3F" FontWeight="Bold"
                                    TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Text="改完点「保存」写回文件"
-                                   VerticalAlignment="Center" Margin="14,0,0,0" Foreground="#A0722E"
-                                   TextTrimming="CharacterEllipsis"/>
-                    </StackPanel>
+                        <CheckBox Content="自动保存" IsChecked="{Binding AutoSaveEnabled}"
+                                  VerticalAlignment="Center" Margin="12,0,4,0"
+                                  ToolTip="编辑期间定时把**未保存的改动**备份到与原文件同目录的「原文件名_bak.扩展名」。&#10;手动「保存」或选择不保存退出时会自动删除备份；&#10;程序崩溃 / 被强行结束进程时备份保留在磁盘上，可手动找回。"/>
+                        <TextBlock Text="|" VerticalAlignment="Center" Foreground="#D9C49A"/>
+                        <TextBox Width="42" Height="26" Margin="4,0,2,0"
+                                 Text="{Binding AutoSaveSeconds}"
+                                 VerticalContentAlignment="Center"
+                                 ToolTip="自动备份间隔（秒），最小 1，默认 10"/>
+                        <TextBlock Text="秒" VerticalAlignment="Center" Margin="2,0,0,0" Foreground="#8A5A1E"/>
+                    </WrapPanel>
                 </Border>
 
                 <!-- 115 网盘工具栏：第一行操作按钮 + 账号，第二行当前路径（独占一行，方便看清层级） -->
@@ -650,8 +679,14 @@
                           HeadersVisibility="Column"
                           GridLinesVisibility="Horizontal"
                           RowHeaderWidth="0"
-                          SelectionMode="Single"
-                          SelectionUnit="FullRow">
+                          SelectionMode="Extended"
+                          SelectionUnit="FullRow"
+                          MouseDoubleClick="LocalFileGrid_MouseDoubleClick"
+                          PreviewKeyDown="LocalFileGrid_PreviewKeyDown"
+                          MouseMove="LocalFileGrid_MouseMove"
+                          DragOver="LocalFileGrid_ReorderDragOver"
+                          DragLeave="LocalFileGrid_ReorderDragLeave"
+                          Drop="LocalFileGrid_ReorderDrop">
                     <!-- 列宽：拖表头分隔线即可调整，拖完自动存进 data\column-widths.json，下次启动照旧；
                          双击分隔线按内容自适应。-「重置列宽为默认」是列被拖窄到看不见时唯一顺手的救命入口。
                          星号列（2* / 3*）没被拖过就仍是星号，会跟着窗口一起伸缩，不会被这次改动锁死。 -->
@@ -728,15 +763,23 @@
                                         <DataTrigger Binding="{Binding PreviewInScope}" Value="False">
                                             <Setter Property="Background" Value="Transparent"/>
                                         </DataTrigger>
+                                        <!-- 行选中时不再显示预览底色块：否则单元格选中底色会从
+                                             底色块的 Padding 四周露出来，看着像一圈边框 -->
+                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridCell}}" Value="True">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Setter Property="Padding" Value="4,2"/>
+                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </DataGridTextColumn.ElementStyle>
                         </DataGridTextColumn>
-                        <DataGridTemplateColumn Header="状态" Width="70" IsReadOnly="True" CanUserSort="False">
+                        <!-- 「状态」= 处理状态图标 + 编辑图标（仅文本 / 字幕文件显示，点击进编辑器；
+                             双击行同样能进）。二进制文件没有编辑图标。 -->
+                        <DataGridTemplateColumn Header="状态" Width="86" IsReadOnly="True" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Grid>
-                                        <Border Width="18" Height="18" BorderThickness="1" CornerRadius="2" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Border Width="18" Height="18" BorderThickness="1" CornerRadius="2" VerticalAlignment="Center">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="BorderBrush" Value="#D9D9D9"/>
@@ -761,25 +804,55 @@
                                                 <Path Style="{StaticResource StatusIconPathStyle}"/>
                                             </Viewbox>
                                         </Border>
-                                    </Grid>
+                                        <!-- 编辑图标按钮：文本 / 字幕文件显示，点击进入编辑模式 -->
+                                        <Button Click="EditIcon_Click" Width="24" Height="24" Margin="6,0,0,0"
+                                                Focusable="False" Cursor="Hand"
+                                                ToolTip="编辑内容（双击行也可以进入）">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="BorderThickness" Value="0"/>
+                                                    <Setter Property="Padding" Value="0"/>
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border Background="{TemplateBinding Background}" CornerRadius="3">
+                                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                </Border>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTextFile}" Value="False">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="#E6F3FF"/>
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <Path Data="{StaticResource EditIconGeometry}"
+                                                  Fill="#1890FF" Width="13" Height="13"
+                                                  Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                    </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
 
-                <TextBox AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         FontFamily="Consolas, Microsoft YaHei"
-                         FontSize="13"
-                         Text="{Binding SelectedFile.Content, UpdateSourceTrigger=PropertyChanged}"
-                         BorderThickness="0,1,0,0"
-                         BorderBrush="#D9D9D9"
-                         Padding="4">
-                    <TextBox.Style>
-                        <Style TargetType="TextBox">
+                <!-- 编辑器 = 行号列 + 内容框。
+                     2026-10-05 用户要求**自动换行**（TextWrapping=Wrap）：长行折行显示，不再横向滚动。
+                     ⚠️ 折行的「显示行」会多于「物理行」，行号列按物理行编号，长行之后会有轻微错位 ——
+                     这是 TextBox 的固有限制（拿不到每个显示行的位置）。横向滚动条随 Wrap 关闭。 -->
+                <Grid x:Name="EditorGrid" IsVisibleChanged="EditorGrid_IsVisibleChanged">
+                    <!-- ⚠️ 默认 Collapsed 必须写在 Style 的 Setter 里，不能写成元素本地属性：
+                         WPF 依赖属性优先级「本地值 > Style 触发器」，写成本地属性的话
+                         下面的 DataTrigger 永远翻不转，编辑器区域会一直隐藏（内容空白）。 -->
+                    <Grid.Style>
+                        <Style TargetType="Grid">
                             <Setter Property="Visibility" Value="Collapsed"/>
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding CurrentMode}" Value="Editor">
@@ -787,8 +860,76 @@
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </TextBox.Style>
-                </TextBox>
+                    </Grid.Style>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="SubtitleLineNumbersBox" Grid.Column="0"
+                                 IsReadOnly="True" Focusable="False" IsTabStop="False"
+                                 TextAlignment="Right" TextWrapping="NoWrap"
+                                 VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Hidden"
+                                 FontFamily="Consolas, Microsoft YaHei" FontSize="13"
+                                 Background="#C9D6E8" Foreground="#1A1A1A"
+                                 BorderThickness="0,1,0,0" BorderBrush="#D9D9D9"
+                                 Padding="0,4,0,4"
+                                 Text="1"/>
+                        <TextBox x:Name="SubtitleEditorBox" Grid.Column="1"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 FontFamily="Consolas, Microsoft YaHei"
+                                 FontSize="13"
+                                 IsReadOnly="{Binding SelectedFile.IsReadOnly}"
+                                 Background="#012443"
+                                 Foreground="#FFFFFF"
+                                 CaretBrush="#FFFFFF"
+                                 SelectionBrush="#FFFF26" SelectionOpacity="1"
+                                 SelectionTextBrush="#FF000000"
+                                 Text="{Binding SelectedFile.Content, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="SubtitleEditor_TextChanged"
+                                 Loaded="SubtitleEditor_Loaded"
+                                 BorderThickness="0,1,0,0"
+                                 BorderBrush="#D9D9D9"
+                                 Padding="4">
+                            <TextBox.Style>
+                                <Style TargetType="TextBox">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedFile.IsReadOnly}" Value="True">
+                                            <Setter Property="ToolTip" Value="只读模式：文件或所在目录没有写入权限，可查看但无法保存"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBox.Style>
+                        </TextBox>
+                    </Grid>
+
+                    <!-- 编辑器底部状态栏：总行数 / 总字数由代码随内容刷新；
+                         文件大小 / 编码直接绑文件条目（保存、编码转换后属性通知会自动跟新） -->
+                    <Border Grid.Row="1" Background="#F6FBFF" BorderBrush="#DCE9F7"
+                            BorderThickness="0,1,0,0" Padding="10,3">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="行数 " Foreground="#4F6E95" FontSize="12"/>
+                            <TextBlock x:Name="EditorStatLines" Text="0" Foreground="#1A1A1A" FontSize="12"
+                                       FontFamily="Consolas, Microsoft YaHei" MinWidth="30"/>
+                            <TextBlock Text="    字数 " Foreground="#4F6E95" FontSize="12"/>
+                            <TextBlock x:Name="EditorStatChars" Text="0" Foreground="#1A1A1A" FontSize="12"
+                                       FontFamily="Consolas, Microsoft YaHei" MinWidth="30"/>
+                            <TextBlock Text="    大小 " Foreground="#4F6E95" FontSize="12"/>
+                            <TextBlock x:Name="EditorStatSize" Text="{Binding SelectedFile.FileSizeLabel, TargetNullValue=-}"
+                                       Foreground="#1A1A1A" FontSize="12" FontFamily="Consolas, Microsoft YaHei"/>
+                            <TextBlock Text="    编码 " Foreground="#4F6E95" FontSize="12"/>
+                            <TextBlock x:Name="EditorStatEnc" Text="{Binding SelectedFile.EncodingLabel, TargetNullValue=自动检测}"
+                                       Foreground="#1A1A1A" FontSize="12" FontFamily="Consolas, Microsoft YaHei"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
 
                 <!-- 115 网盘浏览：双击文件夹进入，单击/Ctrl/Shift 多选，
                      按右侧功能栏规则改名；文件与文件夹需分开选择（不能同批改名） -->
@@ -1067,9 +1208,10 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
                             <Button Content="添加规则"
                                     Command="{Binding AddRuleCommand}"
                                     Width="88" Height="30"
@@ -1100,7 +1242,7 @@
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="Padding" Value="0"/>
-                                    <Setter Property="Margin" Value="0,0,0,8"/>
+                                    <Setter Property="Margin" Value="0,0,0,6"/>
                                     <Setter Property="Background" Value="Transparent"/>
                                     <Setter Property="BorderBrush" Value="Transparent"/>
                                     <Setter Property="BorderThickness" Value="1"/>
@@ -1131,16 +1273,16 @@
                             </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border BorderThickness="1" BorderBrush="#DDD" Padding="8" HorizontalAlignment="Stretch" MaxWidth="900">
+                                    <Border BorderThickness="1" BorderBrush="#DDD" Padding="6" HorizontalAlignment="Stretch" MaxWidth="900">
                                         <StackPanel>
                                             <TextBlock Text="查找（Find）"/>
-                                            <TextBox Margin="0,4,0,8" Height="72"
+                                            <TextBox Margin="0,3,0,6" Height="52"
                                                      TextWrapping="Wrap" AcceptsReturn="True"
                                                      VerticalScrollBarVisibility="Auto"
                                                      Text="{Binding FindText, UpdateSourceTrigger=PropertyChanged}"/>
 
                                             <TextBlock Text="替换为（Replace）"/>
-                                            <TextBox Margin="0,4,0,0" Height="72"
+                                            <TextBox Margin="0,3,0,0" Height="52"
                                                      TextWrapping="Wrap" AcceptsReturn="True"
                                                      VerticalScrollBarVisibility="Auto"
                                                      Text="{Binding ReplaceText, UpdateSourceTrigger=PropertyChanged}"/>
@@ -1149,6 +1291,22 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+
+                        <!-- 底部操作行：查找 / 替换（原「应用到编辑器」）。
+                             放在规则列表下面贴着查找内容区 —— 编辑模式里填完规则直接找 / 替，不用抬头找按钮；
+                             也修掉了原先挤在标题行里被裁掉的问题（横向 StackPanel 窄时不换行只会硬裁）。 -->
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
+                            <Button Content="查找"
+                                    Click="FindInEditor_Click"
+                                    Width="76" Height="28" Margin="0,0,8,0"
+                                    Background="#FFFFFF" BorderBrush="#87B6EA"
+                                    ToolTip="在正在编辑的内容里查找选中规则（没选中就用第一条）的「查找内容」，找到后高亮选中并滚动过去；&#10;连续点会从当前位置往后找，到结尾再绕回开头。"/>
+                            <Button Content="替换"
+                                    Command="{Binding ApplyRulesToEditorCommand}"
+                                    Width="76" Height="28"
+                                    Background="#1890FF" Foreground="White" FontWeight="SemiBold"
+                                    ToolTip="把上面这些替换规则应用到**正在编辑的文件**内容上，就地保存（沿用当前编码，写回前留 .bak）。&#10;只在编辑模式里可用；回列表模式用各组的「开始」处理整批文件。"/>
+                        </StackPanel>
                     </Grid>
                 </GroupBox>
 
@@ -1265,7 +1423,19 @@
                     </Grid>
                 </GroupBox>
 
-                <GroupBox Header="添加/删除（文件名）" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                <GroupBox Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                    <GroupBox.Header>
+                        <!-- 可折叠分组头：整条标题栏可点（Background=Transparent 保证空白处也命中），Tag=记忆键 -->
+                        <Border Background="Transparent" Cursor="Hand" Tag="add-del-filename"
+                                MouseLeftButtonUp="SectionHeader_Click"
+                                ToolTip="点击展开 / 收起（状态会记住，下次启动照旧）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Tag="chevron" Text="▸" FontSize="10" Foreground="#4F6E95"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBlock Text="添加/删除（文件名）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </GroupBox.Header>
                     <StackPanel Margin="8">
                         <GroupBox Header="添加" Margin="0,0,0,10">
                             <Grid Margin="8">
@@ -1421,7 +1591,18 @@
                     </StackPanel>
                 </GroupBox>
 
-                <GroupBox Header="批量删除行" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#FFFFFF">
+                <GroupBox Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#FFFFFF">
+                    <GroupBox.Header>
+                        <Border Background="Transparent" Cursor="Hand" Tag="delete-lines"
+                                MouseLeftButtonUp="SectionHeader_Click"
+                                ToolTip="点击展开 / 收起（状态会记住，下次启动照旧）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Tag="chevron" Text="▸" FontSize="10" Foreground="#4F6E95"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBlock Text="批量删除行" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </GroupBox.Header>
                     <StackPanel Margin="8">
                         <CheckBox Content="启用：删除指定行范围（含起止行）" IsChecked="{Binding DeleteLinesEnabled}"/>
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -1433,7 +1614,18 @@
                     </StackPanel>
                 </GroupBox>
 
-                <GroupBox Header="删除语言字幕" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                <GroupBox Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
+                    <GroupBox.Header>
+                        <Border Background="Transparent" Cursor="Hand" Tag="lang-subtitle"
+                                MouseLeftButtonUp="SectionHeader_Click"
+                                ToolTip="点击展开 / 收起（状态会记住，下次启动照旧）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Tag="chevron" Text="▸" FontSize="10" Foreground="#4F6E95"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBlock Text="删除字幕外语" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </GroupBox.Header>
                     <StackPanel Margin="8">
                         <CheckBox Content="删除英文（EN）" IsChecked="{Binding RemoveEnglish}"/>
                         <CheckBox Content="删除日文（JP，按平/片假名识别）" IsChecked="{Binding RemoveJapanese}" Margin="0,4,0,0"/>
@@ -1441,66 +1633,13 @@
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
                             <Button Content="开始处理" Width="80" Height="24" Background="#1890FF" Foreground="White"
                                     Command="{Binding RunLanguageOnlyCommand}"
-                                    ToolTip="只做一件事：按上面勾选的语言过滤字幕正文并写回文件。&#10;只作用于 .srt / .ass / .txt，不改名、不套用替换规则。"/>
+                                    ToolTip="只做一件事：按上面勾选的语言过滤字幕正文并写回文件。&#10;只作用于文本类文件（字幕 / 文本），不改名、不套用替换规则。"/>
                         </StackPanel>
                     </StackPanel>
                 </GroupBox>
 
-                <!-- 处理方式（原「输出方式」分组框压成一行）：覆盖原文件 或 输出到目录 + 备份开关。
-                     位置不变（仍在底部操作行上方），只是不再占一整个分组框。 -->
-                <Border x:Name="OutputModeBar" Margin="0,0,0,10" Padding="8,6"
-                        Background="#EEF7FF" BorderBrush="#CFE3FA" BorderThickness="1" CornerRadius="4">
-                    <StackPanel>
-                        <WrapPanel>
-                            <TextBlock Text="处理方式" VerticalAlignment="Center" FontWeight="Bold"
-                                       Foreground="#4F6E95" Margin="0,0,8,0"/>
-                            <CheckBox Content="覆盖原文件" IsChecked="{Binding InPlace}" VerticalAlignment="Center"
-                                      Margin="0,0,16,0"
-                                      ToolTip="勾选 = 直接改原文件（文件名按规则改，内容就地写回）&#10;不勾选 = 处理结果输出到下面指定的目录，原文件保留"/>
-                            <CheckBox Content="覆盖时创建 .bak 备份" IsChecked="{Binding MakeBackup}" VerticalAlignment="Center"
-                                      ToolTip="覆盖前先留一份 原文件名.bak，改错了还能找回"/>
-                        </WrapPanel>
-
-                        <Grid Margin="0,6,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-
-                            <!-- 覆盖模式下不需要目录：置灰并提示，避免误以为还能输出到别处 -->
-                            <TextBox Grid.Column="0" Height="24" VerticalContentAlignment="Center"
-                                     Text="{Binding OutputDirectory}">
-                                <TextBox.Style>
-                                    <Style TargetType="TextBox">
-                                        <Setter Property="IsEnabled" Value="True"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding InPlace}" Value="True">
-                                                <Setter Property="IsEnabled" Value="False"/>
-                                                <Setter Property="Opacity" Value="0.55"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBox.Style>
-                            </TextBox>
-
-                            <Button Grid.Column="1" Content="选择目录" Width="76" Height="24" Margin="6,0,0,0"
-                                    Click="ChooseOutput_Click">
-                                <Button.Style>
-                                    <Style TargetType="Button">
-                                        <Setter Property="Background" Value="#1890FF"/>
-                                        <Setter Property="Foreground" Value="White"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding InPlace}" Value="True">
-                                                <Setter Property="IsEnabled" Value="False"/>
-                                                <Setter Property="Opacity" Value="0.55"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                            </Button>
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                <!-- 「处理方式 / 选择目录」条已按用户要求移除（2026-10-05）：
+                     处理永远就地覆盖写回（.bak 备份默认保留），输出到目录的模式下线。 -->
 
                 <WrapPanel Margin="0,0,0,10">
                     <Button Content="开始处理" Width="80" Height="28" Background="#1890FF" Foreground="White" Command="{Binding RunCommand}" Margin="0,0,6,6"/>

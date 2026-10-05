@@ -34,7 +34,7 @@ public sealed class AsyncRelayCommand : ICommand
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"操作失败：{ex.Message}", _errorTitle, MessageBoxButton.OK, MessageBoxImage.Error);
+            UiDialog.Show($"操作失败：{ex.Message}", _errorTitle, MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

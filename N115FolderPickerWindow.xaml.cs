@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using NameTool.Services.N115;
 using NameTool.ViewModels;
+using NameTool.Infrastructure;
 
 namespace NameTool;
 
@@ -213,7 +214,7 @@ public partial class N115FolderPickerWindow : Window
         if (FolderList.SelectedItem is not N115ItemViewModel folder || !folder.IsDirectory) return;
         if (_forbidden.Contains(folder.Id))
         {
-            MessageBox.Show(this,
+            UiDialog.Show(this,
                 $"「{folder.Name}」正是本次要{_kind.ToVerb()}的文件夹，不能把它放到它自己或它的子目录里。",
                 _title, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -340,7 +341,7 @@ public partial class N115FolderPickerWindow : Window
     {
         if (_forbidden.Contains(CurrentId))
         {
-            MessageBox.Show(this, "不能把文件夹放到它自己里面。", _title,
+            UiDialog.Show(this, "不能把文件夹放到它自己里面。", _title,
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

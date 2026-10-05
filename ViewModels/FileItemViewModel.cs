@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using NameTool.Infrastructure;
 using NameTool.Services;
 
@@ -34,6 +35,7 @@ public sealed class FileItemViewModel : ObservableObject
         {
             if (SetProperty(ref _filePath, value))
             {
+                _isTextFile = null;   // 路径变了（另存 / 重指）重新嗅探
                 RaisePropertyChanged(nameof(OriginalFileName));
                 RaisePropertyChanged(nameof(IsTextFile));
             }
@@ -115,6 +117,68 @@ public sealed class FileItemViewModel : ObservableObject
     /// <summary>记下磁盘上的原始正文（拖入 / 重新从磁盘读取时调用）。</summary>
     public void SetOriginalContent(string content) => _originalContent = content;
 
+    /// <summary>
+    /// 当前文件在磁盘上判定的编码（加载时检测、编码转换后更新）。
+    /// 保存 / 写回优先用它，避免每次保存都重新检测（转换后重检测会把编码又猜回去）。
+    /// 变化时一并通知 <see cref="EncodingLabel"/>（编辑器底部状态栏直接绑它）。
+    /// </summary>
+    private Encoding? _currentEncoding;
+
+    public Encoding? CurrentEncoding
+    {
+        get => _currentEncoding;
+        set
+        {
+            if (SetProperty(ref _currentEncoding, value))
+            {
+                RaisePropertyChanged(nameof(EncodingLabel));
+            }
+        }
+    }
+
+    /// <summary>编码短标签（如「UTF-8」「GB2312/GBK」「UTF-8（BOM）」）；还没判定过显示「自动检测」。</summary>
+    public string EncodingLabel => _currentEncoding is null
+        ? "自动检测"
+        : MainViewModel.DescribeEncoding(_currentEncoding);
+
+    /// <summary>
+    /// 文件大小标签（实时读磁盘：保存后大小会变，别缓存）。读不到（文件被移走等）显示「-」。
+    /// </summary>
+    public string FileSizeLabel
+    {
+        get
+        {
+            try
+            {
+                var info = new FileInfo(FilePath);
+                return info.Exists ? FormatFileSize(info.Length) : "-";
+            }
+            catch
+            {
+                return "-";
+            }
+        }
+    }
+
+    /// <summary>字节量转人话：B / KB / MB / GB，一位小数。</summary>
+    public static string FormatFileSize(long bytes)
+    {
+        const long KB = 1024, MB = KB * 1024, GB = MB * 1024;
+        return bytes switch
+        {
+            >= GB => $"{bytes / (double)GB:F1} GB",
+            >= MB => $"{bytes / (double)MB:F1} MB",
+            >= KB => $"{bytes / (double)KB:F1} KB",
+            _ => $"{bytes} B"
+        };
+    }
+
+    /// <summary>
+    /// 只读模式：拖入时检测到文件或其所在目录**没有写入权限**（或用户选择只读加入）时为 true。
+    /// 只读条目可查看 / 进编辑器，但保存、编码转换、应用规则、自动备份、批处理一律跳过。
+    /// </summary>
+    public bool IsReadOnly { get; set; }
+
     /// <summary>由程序（加载、语言勾选刷新）写入正文：同时记下这次写入的内容。</summary>
     public void SetProgrammaticContent(string content)
     {
@@ -130,9 +194,25 @@ public sealed class FileItemViewModel : ObservableObject
     {
         _originalContent = _content;
         _programmaticContent = _content;
+        RaisePropertyChanged(nameof(FileSizeLabel));   // 落盘后大小可能变了，底部状态栏跟着刷新
     }
 
-    public bool IsTextFile => TextBatchProcessor.TextExts.Contains(Path.GetExtension(FilePath).ToLowerInvariant());
+    /// <summary>
+    /// 是否按文本处理（进编辑器 / 读改正文）。
+    /// 已知文本扩展名（TextExts）直接算；其余扩展名做**一次性内容嗅探**并缓存 ——
+    /// 像文本的文件（.json / .lrc / 无扩展名脚本…）同样可编辑，二进制（含 NUL / 控制字符多）仅改名。
+    /// 判定结果随实例缓存，别在频繁路径上反复嗅探。
+    /// </summary>
+    private bool? _isTextFile;
+
+    public bool IsTextFile
+    {
+        get
+        {
+            _isTextFile ??= FilePath.Length > 0 && TextBatchProcessor.IsTextFile(FilePath);
+            return _isTextFile.Value;
+        }
+    }
 
     public DisplayMode Mode
     {

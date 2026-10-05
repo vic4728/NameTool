@@ -10,7 +10,7 @@
     <RootNamespace>NameTool</RootNamespace>
 
     <!-- 版本号：只需维护此处 Version，其它版本信息自动同步 -->
-    <Version>1.9.10</Version>
+    <Version>2.0.0</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>

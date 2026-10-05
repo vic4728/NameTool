@@ -308,7 +308,7 @@ public sealed class N115ViewModel : ObservableObject
 
     private void Logout()
     {
-        if (MessageBox.Show("退出登录会清除本机保存的 115 登录状态，下次需要重新登录授权。\n\n确认退出？",
+        if (UiDialog.Show("退出登录会清除本机保存的 115 登录状态，下次需要重新登录授权。\n\n确认退出？",
                 "115 网盘", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             return;
@@ -876,7 +876,7 @@ public sealed class N115ViewModel : ObservableObject
 
         if (_selection.Count == 0)
         {
-            MessageBox.Show("请先在列表中选中要重命名的条目。\n\n· 单击选中一个\n· Ctrl + 单击多选\n· Shift + 单击连选",
+            UiDialog.Show("请先在列表中选中要重命名的条目。\n\n· 单击选中一个\n· Ctrl + 单击多选\n· Shift + 单击连选",
                 actionTitle, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -887,7 +887,7 @@ public sealed class N115ViewModel : ObservableObject
         // 文件与文件夹必须分开处理，避免同一批里两种对象语义混淆、出事不好回滚。
         if (folderCount > 0 && fileCount > 0)
         {
-            MessageBox.Show(
+            UiDialog.Show(
                 $"当前选中的 {_selection.Count} 项里同时有 {fileCount} 个文件和 {folderCount} 个文件夹。\n\n"
                 + "文件与文件夹不能在同一次操作中改名，请分开进行：\n"
                 + "  · 只选文件   → 批量改文件名\n"
@@ -921,20 +921,20 @@ public sealed class N115ViewModel : ObservableObject
 
             if (error is not null)
             {
-                MessageBox.Show(error, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                UiDialog.Show(error, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(newName))
             {
-                MessageBox.Show($"「{targets[i].Name}」按当前规则处理后名称为空，请调整规则后重试。",
+                UiDialog.Show($"「{targets[i].Name}」按当前规则处理后名称为空，请调整规则后重试。",
                     "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             if (Encoding.UTF8.GetByteCount(newName) > MaxNameBytes)
             {
-                MessageBox.Show($"「{targets[i].Name}」的新名称是 {Encoding.UTF8.GetByteCount(newName)} 字节，"
+                UiDialog.Show($"「{targets[i].Name}」的新名称是 {Encoding.UTF8.GetByteCount(newName)} 字节，"
                                 + $"超过 115 的 {MaxNameBytes} 字节上限：\n\n  {newName}\n\n请调整规则后重试。",
                     "名称过长", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
@@ -954,7 +954,7 @@ public sealed class N115ViewModel : ObservableObject
             var emptyHint = toSimplified
                 ? $"选中的{kindText}名称里没有需要转换的繁体字（已经是简体）。"
                 : "按当前规则计算后，选中" + kindText + "的名称没有变化。\n\n请检查右侧「批量替换 / 批量序号 / 添加删除」的设置。";
-            MessageBox.Show(emptyHint, actionTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show(emptyHint, actionTitle, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -972,7 +972,7 @@ public sealed class N115ViewModel : ObservableObject
         if (unchanged > 0) summary += $"（另有 {unchanged} 个{kindText}改名后无变化，自动跳过）\n";
         summary += "\n确认继续？";
 
-        if (MessageBox.Show(summary, actionTitle, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (UiDialog.Show(summary, actionTitle, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             return;
         }
@@ -1026,7 +1026,7 @@ public sealed class N115ViewModel : ObservableObject
         var doneLabel = toSimplified ? "「繁=>简」" : string.Empty;
         StatusText = $"重命名{kindText}完成：成功 {ok}，失败 {fail}";
         _log($"[115] 重命名{kindText}{doneLabel}完成：成功 {ok}，失败 {fail}");
-        MessageBox.Show($"115 网盘重命名{kindText}{doneLabel}完成：成功 {ok}，失败 {fail}", actionTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+        UiDialog.Show($"115 网盘重命名{kindText}{doneLabel}完成：成功 {ok}，失败 {fail}", actionTitle, MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>
@@ -1045,7 +1045,7 @@ public sealed class N115ViewModel : ObservableObject
 
         if (_selection.Count != 1)
         {
-            MessageBox.Show("「重命名」一次只能改一个文件。\n\n请只选中一个文件再试；"
+            UiDialog.Show("「重命名」一次只能改一个文件。\n\n请只选中一个文件再试；"
                             + "批量改名请用表格底部的「按右侧规则重命名」。",
                 "115 网盘 · 重命名", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1054,7 +1054,7 @@ public sealed class N115ViewModel : ObservableObject
         var item = _selection[0];
         if (item.IsDirectory)
         {
-            MessageBox.Show($"「{item.Name}」是文件夹，不能用这个按钮改名。\n\n"
+            UiDialog.Show($"「{item.Name}」是文件夹，不能用这个按钮改名。\n\n"
                             + "文件夹改名请用表格底部的「按右侧规则重命名」。",
                 "115 网盘 · 重命名", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1069,7 +1069,7 @@ public sealed class N115ViewModel : ObservableObject
         var nameError = CheckSingleRenameName(oldName, newName);
         if (nameError is not null)
         {
-            MessageBox.Show(nameError, nameError.Contains("字节", StringComparison.Ordinal) ? "名称过长" : "115 网盘 · 重命名",
+            UiDialog.Show(nameError, nameError.Contains("字节", StringComparison.Ordinal) ? "名称过长" : "115 网盘 · 重命名",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -1119,7 +1119,7 @@ public sealed class N115ViewModel : ObservableObject
         StatusText = fail == 0
             ? $"已重命名：{newName}"
             : $"重命名失败：{oldName}";
-        MessageBox.Show(
+        UiDialog.Show(
             ok > 0
                 ? $"重命名完成：\n\n  {oldName}  →  {newName}\n\n改错了可以点「撤销改名」回退。"
                 : $"重命名失败，名称未改变。\n\n请检查网络或 115 的登录状态后重试。",
@@ -1174,7 +1174,7 @@ public sealed class N115ViewModel : ObservableObject
         UndoRenameCommand.RaiseCanExecuteChanged();
         StatusText = $"撤销完成：成功 {ok}，失败 {fail}";
         _log($"[115] 撤销改名：成功 {ok}，失败 {fail}");
-        MessageBox.Show($"已撤销上次改名：成功 {ok}，失败 {fail}", "115 网盘", MessageBoxButton.OK, MessageBoxImage.Information);
+        UiDialog.Show($"已撤销上次改名：成功 {ok}，失败 {fail}", "115 网盘", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     // ---------------- 移动到 / 复制到 / 删除 ----------------
@@ -1191,7 +1191,7 @@ public sealed class N115ViewModel : ObservableObject
         var targets = _selection.Where(x => !x.IsParentEntry).ToList();
         if (targets.Count == 0)
         {
-            MessageBox.Show("请先在列表中选中要处理的条目。\n\n· 单击选中一个\n· Ctrl + 单击多选\n· Shift + 单击连选",
+            UiDialog.Show("请先在列表中选中要处理的条目。\n\n· 单击选中一个\n· Ctrl + 单击多选\n· Shift + 单击连选",
                 $"115 网盘{verb}", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -1206,7 +1206,7 @@ public sealed class N115ViewModel : ObservableObject
 
         if (string.Equals(picked.Id, CurrentFolderId, StringComparison.Ordinal))
         {
-            MessageBox.Show(
+            UiDialog.Show(
                 $"选中的目标就是当前所在的「{picked.Name}」，内容已经在这里了，不需要再{verb}。\n\n请在选择器里换一层目录。",
                 $"115 网盘{verb}", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1215,7 +1215,7 @@ public sealed class N115ViewModel : ObservableObject
         var conflict = targets.FirstOrDefault(t => t.IsDirectory && picked.PathIds.Contains(t.Id));
         if (conflict is not null)
         {
-            MessageBox.Show(
+            UiDialog.Show(
                 $"目标目录在「{conflict.Name}」里面，不能把「{conflict.Name}」{verb}到它自己的子目录。",
                 $"115 网盘{verb}", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -1241,7 +1241,7 @@ public sealed class N115ViewModel : ObservableObject
         summary.AppendLine();
         summary.Append("确认继续？");
 
-        if (MessageBox.Show(summary.ToString(), $"115 网盘{verb}",
+        if (UiDialog.Show(summary.ToString(), $"115 网盘{verb}",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             return;
@@ -1276,7 +1276,7 @@ public sealed class N115ViewModel : ObservableObject
         {
             StatusText = $"{verb}失败：{error}";
             _log($"[115][FAIL] {verb} {ids.Count} 项 → 「{picked.Name}」(cid={picked.Id})：{error}");
-            MessageBox.Show($"115 网盘{verb}失败：\n\n{error}", $"115 网盘{verb}",
+            UiDialog.Show($"115 网盘{verb}失败：\n\n{error}", $"115 网盘{verb}",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -1302,7 +1302,7 @@ public sealed class N115ViewModel : ObservableObject
         var targets = _selection.Where(x => !x.IsParentEntry).ToList();
         if (targets.Count == 0)
         {
-            MessageBox.Show("请先在列表中选中要删除的条目。", "115 网盘删除",
+            UiDialog.Show("请先在列表中选中要删除的条目。", "115 网盘删除",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -1326,7 +1326,7 @@ public sealed class N115ViewModel : ObservableObject
         summary.Append("确认删除？");
 
         // 默认按钮放在「否」上，避免习惯性回车误删
-        if (MessageBox.Show(summary.ToString(), "115 网盘删除",
+        if (UiDialog.Show(summary.ToString(), "115 网盘删除",
                 MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
         {
             return;
@@ -1360,7 +1360,7 @@ public sealed class N115ViewModel : ObservableObject
             // 115 的删除是异步的：同一目录上一次删除没跑完会回 990009，服务端原文已经是中文提示，直接照转
             StatusText = $"删除失败：{error}";
             _log($"[115][FAIL] 删除 {ids.Count} 项：{error}");
-            MessageBox.Show($"115 网盘删除失败：\n\n{error}", "115 网盘删除",
+            UiDialog.Show($"115 网盘删除失败：\n\n{error}", "115 网盘删除",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

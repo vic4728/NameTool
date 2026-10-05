@@ -1,5 +1,6 @@
 using System.Text;
 using System.Windows;
+using NameTool.Infrastructure;
 
 namespace NameTool;
 
@@ -15,7 +16,7 @@ public partial class LogWindow : Window
         var items = LogList.SelectedItems;
         if (items.Count == 0)
         {
-            MessageBox.Show("请先点选（Ctrl / Shift 可多选）要复制的日志行。", "复制日志",
+            UiDialog.Show("请先点选（Ctrl / Shift 可多选）要复制的日志行。", "复制日志",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -30,7 +31,7 @@ public partial class LogWindow : Window
     {
         if (DataContext is not ViewModels.MainViewModel vm || vm.Logs.Count == 0)
         {
-            MessageBox.Show("日志为空。", "复制日志", MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show("日志为空。", "复制日志", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -46,11 +47,11 @@ public partial class LogWindow : Window
         try
         {
             Clipboard.SetText(text);
-            MessageBox.Show("已复制到剪贴板。", "复制日志", MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show("已复制到剪贴板。", "复制日志", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch
         {
-            MessageBox.Show("复制失败（剪贴板被其他程序占用），请再点一次。", "复制日志",
+            UiDialog.Show("复制失败（剪贴板被其他程序占用），请再点一次。", "复制日志",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }

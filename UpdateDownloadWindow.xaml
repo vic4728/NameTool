@@ -6,8 +6,10 @@
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
-        Background="#E9E9E9"
+        Background="#F4F8FC"
         Closing="Window_Closing">
+    <!-- 与主窗口风格对齐（原先是灰底 #E9E9E9 + 灰槽 + 黄绿渐变，跟主界面完全不搭）：
+         浅蓝底 #F4F8FC、进度槽白底浅蓝边、进度填充蓝色 #1890FF、按钮沿用橙色强调。 -->
     <Grid Margin="16,14,16,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -19,23 +21,18 @@
 
         <TextBlock x:Name="FileNameText"
                    Text="正在下载..."
-                   FontSize="18"/>
+                   FontSize="18"
+                   Foreground="#33475B"/>
 
         <Grid x:Name="ProgressTrack" Grid.Row="2" Height="24">
-            <Border CornerRadius="12" Background="#A7A7A7"/>
-            <Border x:Name="ProgressFill" Width="0" HorizontalAlignment="Left" CornerRadius="12">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="#C8E86A" Offset="0"/>
-                        <GradientStop Color="#9CCC1A" Offset="1"/>
-                    </LinearGradientBrush>
-                </Border.Background>
-            </Border>
+            <Border CornerRadius="12" Background="#FFFFFF" BorderBrush="#C9DDF4" BorderThickness="1"/>
+            <Border x:Name="ProgressFill" Width="0" HorizontalAlignment="Left" CornerRadius="12"
+                    Background="#1890FF"/>
             <TextBlock x:Name="PercentText"
                        Text="0%"
                        HorizontalAlignment="Center"
                        VerticalAlignment="Center"
-                       Foreground="#5D6A3A"
+                       Foreground="#33475B"
                        FontSize="14"/>
         </Grid>
 
@@ -44,21 +41,28 @@
                 Content="取消升级"
                 Width="120" Height="32"
                 HorizontalAlignment="Center"
+                Background="#F5821F"
                 Foreground="White"
+                FontWeight="SemiBold"
                 FontSize="14"
-                BorderBrush="#D47A13"
+                BorderBrush="#D96F10"
                 Click="Cancel_Click">
-            <Button.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#FFA238" Offset="0"/>
-                    <GradientStop Color="#F57D00" Offset="1"/>
-                </LinearGradientBrush>
-            </Button.Background>
             <Button.Template>
                 <ControlTemplate TargetType="Button">
-                    <Border CornerRadius="8" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Border CornerRadius="4" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                        <Grid>
+                            <Border x:Name="CancelOverlay" CornerRadius="4" Background="Transparent"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
                     </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="CancelOverlay" Property="Background" Value="#26000000"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="CancelOverlay" Property="Background" Value="#40000000"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Button.Template>
         </Button>

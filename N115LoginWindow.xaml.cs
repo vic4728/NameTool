@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using NameTool.Services.N115;
+using NameTool.Infrastructure;
 
 namespace NameTool;
 
@@ -332,7 +333,7 @@ public partial class N115LoginWindow : Window
     {
         if (!_webReady || Web.CoreWebView2 is null) return;
 
-        if (MessageBox.Show(this,
+        if (UiDialog.Show(this,
                 "将清除内嵌浏览器里保存的 115 登录状态，然后重新加载页面。\n\n确认继续？",
                 "115 网盘", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
@@ -593,7 +594,7 @@ public partial class N115LoginWindow : Window
         var credential = N115Credential.ParseCookieHeader(CookieTextBox.Text);
         if (credential is null)
         {
-            MessageBox.Show(this,
+            UiDialog.Show(this,
                 "Cookie 解析失败。\n\n需要同时包含 UID、CID、SEID 三项，例如：\nUID=123_ABCDEF...; CID=1A2B...; SEID=...; KID=...",
                 "115 网盘登录",
                 MessageBoxButton.OK,

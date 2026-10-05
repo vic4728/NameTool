@@ -2,25 +2,64 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="日志" Height="480" Width="860"
-        MinHeight="320" MinWidth="520">
+        MinHeight="320" MinWidth="520"
+        Background="#F4F8FC">
+    <Window.Resources>
+        <!-- 主窗口隐式按钮同款：白底 + 浅蓝边框 + 圆角 4 + hover 浅蓝（LogWindow 是独立窗口，
+             拿不到主窗口的 Window.Resources，这里照抄一份保持视觉一致） -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C9DDF4"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="LogButtonBorder"
+                                CornerRadius="4"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="LogButtonBorder" Property="Background" Value="#F2F8FF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="LogButtonBorder" Property="Background" Value="#E8F2FF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="LogButtonBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- SelectionMode=Extended：可 Ctrl/Shift 多选行；容器样式去掉默认蓝底，选中行只是淡高亮 -->
-        <ListBox x:Name="LogList"
-                 Grid.Row="0"
-                 ItemsSource="{Binding Logs}"
-                 SelectionMode="Extended"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto">
-            <ListBox.ItemContainerStyle>
-                <Style TargetType="ListBoxItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                </Style>
-            </ListBox.ItemContainerStyle>
-        </ListBox>
+        <!-- 日志卡片：白底圆角承载列表（原先是裸 ListBox 直接贴在默认窗口底上）。
+             SelectionMode=Extended：可 Ctrl/Shift 多选行；容器样式去掉默认蓝底，选中行只是淡高亮 -->
+        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#D6E4F3" BorderThickness="1" CornerRadius="4">
+            <ListBox x:Name="LogList"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     ItemsSource="{Binding Logs}"
+                     SelectionMode="Extended"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
+        </Border>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <!-- 用户反馈：日志内容无法选择复制（排障时要把 [FAIL] 行发出来）。两条路都给：

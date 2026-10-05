@@ -15,17 +15,121 @@ public enum SubtitleFormat
 public sealed class TextBatchProcessor
 {
     /// <summary>
-    /// **会被读取正文并改写**的扩展名（字幕 / 纯文本）。
-    /// 除这几类外的**任何**扩展名都只按文件名处理（改名 / 复制），绝不按文本读取。
-    /// <para>
-    /// 这里刻意不再维护「支持格式白名单」：任意文件都能拖入、显示、改名。
-    /// 需要判断某个文件是否可编辑内容，用 <see cref="FileItemViewModel.IsTextFile"/>（= 本集合）。
-    /// </para>
+    /// **确定按文本处理**的扩展名（字幕 / 纯文本 / 常见文本格式）——这些直接进编辑器、读改正文。
+    /// 其余扩展名（含无扩展名）不再一刀切当二进制：走 <see cref="IsTextFile"/> 做**内容嗅探**，
+    /// 像文本（.lrc / 脚本 / 无扩展名的文本…）同样能进编辑模式；
+    /// 只有嗅探出二进制特征（NUL 字节 / 控制字符占比过高）才仅改名，绝不读坏文件。
     /// </summary>
-    public static readonly HashSet<string> TextExts = [".srt", ".ass", ".txt"];
+    public static readonly HashSet<string> TextExts =
+    [
+        ".srt", ".ass", ".txt",
+        ".md", ".csv", ".json", ".yaml", ".yml",
+        ".html", ".xml", ".log", ".php", ".bat", ".js", ".css", ".ini", ".nfo",
+    ];
 
     /// <summary>常见音视频扩展名。**仅用于提示归类**，不再是处理白名单。</summary>
     public static readonly HashSet<string> MediaExts = [".mp3", ".mp4", ".mkv", ".mov", ".ts", ".wav"];
+
+    /// <summary>
+    /// 文件（或其所在目录）是否**可写**——拖入时判定是否要弹「只读模式」询问。
+    /// 文件带只读属性 / 拒绝写访问、所在目录建不了临时文件，都算不可写；
+    /// 文件只是被别的程序占用（IOException）不算没权限，仍按可写处理。
+    /// </summary>
+    public static bool CanWriteFile(string filePath)
+    {
+        try
+        {
+            if ((File.GetAttributes(filePath) & FileAttributes.ReadOnly) != 0) return false;
+        }
+        catch
+        {
+            return false;
+        }
+
+        try
+        {
+            using (new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+            {
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            // 文件正被占用 ≠ 没有写权限，继续看目录
+        }
+        catch
+        {
+            return false;
+        }
+
+        return CanWriteDirectory(Path.GetDirectoryName(Path.GetFullPath(filePath)));
+    }
+
+    /// <summary>目录是否可写：试着建一个临时文件再删掉，能建能删就是可写。</summary>
+    public static bool CanWriteDirectory(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return false;
+        try
+        {
+            var probe = Path.Combine(dir, ".nt_wtest_" + Guid.NewGuid().ToString("N")[..8] + ".tmp");
+            using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write))
+            {
+            }
+
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 这个文件是否按文本处理：已知文本扩展名直接算；其余看内容嗅探。
+    /// （替换 <see cref="FileItemViewModel.IsTextFile"/> 旧的「只认三个扩展名」规则。）
+    /// </summary>
+    public static bool IsTextFile(string filePath)
+        => TextExts.Contains(Path.GetExtension(filePath).ToLowerInvariant())
+           || LooksLikeTextFile(filePath);
+
+    /// <summary>
+    /// 内容嗅探：读头部 8KB 判断是否「像文本」。
+    /// <list type="bullet">
+    /// <item>含 NUL(0x00) 字节 ⇒ 二进制（绝大多数二进制格式都有）；</item>
+    /// <item>控制字符（除 \t \r \n）占比 &gt; 5% ⇒ 二进制；</item>
+    /// <item>空文件 / 读不出 ⇒ 按文本处理（空文件本来就能编辑）。</item>
+    /// </list>
+    /// ⚠️ 无 BOM 的 UTF-16 文本头部大量 0x00 会被误判成二进制 —— 极少见（Windows 文本默认带 BOM），
+    /// 且旧规则下它同样不可编辑，不算回退。
+    /// </summary>
+    public static bool LooksLikeTextFile(string filePath)
+    {
+        try
+        {
+            using var fs = File.OpenRead(filePath);
+            Span<byte> buf = stackalloc byte[8192];
+            var read = fs.Read(buf);
+            if (read == 0) return true;                                  // 空文件按文本
+            if (buf[..read].Contains((byte)0)) return false;             // 有 NUL ⇒ 二进制
+
+            var control = 0;
+            for (var i = 0; i < read; i++)
+            {
+                var b = buf[i];
+                if (b < 32 && b != 9 && b != 10 && b != 13) control++;
+            }
+
+            return control * 100.0 / read <= 5.0;
+        }
+        catch
+        {
+            return false;   // 打不开 / IO 异常 ⇒ 不冒险按文本改写
+        }
+    }
 
     public static SubtitleFormat DetectSubtitleFormat(string content)
     {
@@ -94,10 +198,9 @@ public sealed class TextBatchProcessor
                 return new ProcessResult { Success = false, Message = "文件不存在" };
             }
 
-            // 任意扩展名都受理：字幕 / 文本类改写正文，其余一律「仅改名 / 复制」。
-            // 没有扩展名的文件同样走「仅改名」，不再拒绝。
-            var ext = file.Extension.ToLowerInvariant();
-            return TextExts.Contains(ext)
+            // 任意扩展名都受理：文本类（已知扩展名或内容嗅探像文本）改写正文，其余一律「仅改名 / 复制」。
+            // 没有扩展名的文件同样按内容判断，不再拒绝。
+            return IsTextFile(file.FullName)
                 ? ProcessTextFile(file, options)
                 : ProcessFileByRenameOnly(file, options);
         }
@@ -318,30 +421,111 @@ public sealed class TextBatchProcessor
         return output;
     }
 
+    /// <summary>
+    /// 读取文本文件并判定编码（2026-10-05 重写，修 GB2312 显示乱码）：
+    /// 旧实现第一个就用**宽松 UTF-8** 整读——非法字节被悄悄替换成 U+FFFD（�）而不报错，
+    /// GB2312/GBK 文件「成功」读出一串乱码，永远轮不到 GB 编码。
+    /// 新顺序：BOM 直判 → **严格 UTF-8**（非法字节抛异常）→ gb18030（GB2312/GBK 超集）→ Big5 → Unicode 无 BOM → 1252 兜底。
+    /// </summary>
     public static (string? Content, Encoding? Encoding) ReadTextWithEncodingFallback(string path)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        foreach (var enc in new[]
-                 {
-                     new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
-                     new UTF8Encoding(false),
-                     Encoding.GetEncoding("gb18030"),
-                     Encoding.Unicode,
-                     Encoding.GetEncoding(1252)
-                 })
+        try
         {
+            // ① BOM 直判：有 BOM 就没有猜测空间
+            var bom = DetectBomEncoding(path);
+            if (bom is not null)
+            {
+                return (File.ReadAllText(path, bom), bom);
+            }
+
+            // ② 严格 UTF-8：invalid byte 直接抛异常，才轮得到下面的 GB 系
+            var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
             try
             {
-                var content = File.ReadAllText(path, enc);
-                return (content, enc);
+                return (File.ReadAllText(path, strictUtf8), strictUtf8);
             }
             catch
             {
-                // ignore
+                // 不是合法 UTF-8 —— 走多字节中文编码
+            }
+
+            // ③ gb18030：GB2312 / GBK 的完整超集，且与它们字节兼容；解码几乎不失败
+            var gb = Encoding.GetEncoding("gb18030");
+            return (File.ReadAllText(path, gb), gb);
+        }
+        catch
+        {
+            // ④ 兜底：Big5 / UTF-16 无 BOM / 1252，逐个试，全失败才算读不出
+            foreach (var enc in new[]
+                     {
+                         Encoding.GetEncoding("big5"),
+                         Encoding.Unicode,
+                         Encoding.GetEncoding(1252)
+                     })
+            {
+                try
+                {
+                    return (File.ReadAllText(path, enc), enc);
+                }
+                catch
+                {
+                    // ignore
+                }
             }
         }
 
         return (null, null);
+    }
+
+    /// <summary>按 BOM 判定编码（无 BOM 或读不出时返回 null，交给内容探测）。</summary>
+    public static Encoding? DetectBomEncoding(string path)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        try
+        {
+            using var fs = File.OpenRead(path);
+            Span<byte> head = stackalloc byte[4];
+            var read = fs.Read(head);
+            if (read >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF)
+            {
+                return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            }
+
+            if (read >= 2 && head[0] == 0xFF && head[1] == 0xFE)
+            {
+                return new UnicodeEncoding(false, true); // UTF-16 LE（写回保留 BOM）
+            }
+
+            if (read >= 2 && head[0] == 0xFE && head[1] == 0xFF)
+            {
+                return new UnicodeEncoding(true, true);  // UTF-16 BE
+            }
+        }
+        catch
+        {
+            // 文件读不了就让调用方走统一失败路径
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 目标编码能否无损表示 <paramref name="text"/>（用 EncoderExceptionFallback 严格试编码）。
+    /// 编码转换前用它拦截「GB2312 装不下生僻字」这类有损转换，避免静默写成 ? 号。
+    /// </summary>
+    public static bool CanEncodeAll(Encoding encoding, string text)
+    {
+        var strict = Encoding.GetEncoding(encoding.CodePage, new EncoderExceptionFallback(), new DecoderExceptionFallback());
+        try
+        {
+            _ = strict.GetByteCount(text);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
     }
 
     private static string DetectNewline(string content) => content.Contains("\r\n") ? "\r\n" : "\n";
@@ -375,7 +559,28 @@ public sealed class TextBatchProcessor
             sw.Write(content);
         }
 
-        File.Move(tmp, path, true);
+        ReplaceWithRetry(tmp, path);
+    }
+
+    /// <summary>
+    /// 落盘替换带短暂重试：刚写完的文件常被杀软实时扫描短暂独占（无共享打开），
+    /// File.Move(overwrite) 会随机抛 IOException —— 处理「偶发失败」就是这么来的。
+    /// 重试 5 次（50ms 递增）足以躲过扫描窗口；仍失败就把异常抛给调用方正常报错。
+    /// </summary>
+    private static void ReplaceWithRetry(string tmp, string target)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(tmp, target, true);
+                return;
+            }
+            catch (Exception ex) when (attempt < 5 && ex is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(50 * attempt);
+            }
+        }
     }
 
     private static string NextAvailablePath(string path)

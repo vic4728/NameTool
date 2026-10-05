@@ -56,9 +56,36 @@ public sealed class MainViewModel : ObservableObject
     private bool _removeEnglish;
     private bool _removeJapanese;
     private bool _removeKorean;
-    private bool _inPlace = true;
-    private bool _makeBackup = true;   // 覆盖前默认留一份 .bak：误操作的唯一回滚手段
+    private bool _makeBackup = true;   // 覆盖前默认留一份 .bak：误操作的唯一回滚手段（处理方式条已移除，保持默认常开）
     private string _outputDirectory = string.Empty;
+
+    // ---- 编辑模式自动备份（用户要求：底部 [自动保存|"保存时间"秒]，默认开、默认 10 秒）----
+    private bool _autoSaveEnabled = true;
+    private int _autoSaveSeconds = 10;
+
+    /// <summary>自动备份上次写入的内容：没变化就不重复写盘。</summary>
+    private string? _lastAutoBackupContent;
+
+    /// <summary>
+    /// 是否弹交互对话框（未保存提示 / 只读询问）。
+    /// <para>默认 <c>false</c>：离屏校验 / 无界面环境必须静默走默认分支，否则 MessageBox 会卡死断言；
+    /// <see cref="MainWindow"/> 构造时把它打开。</para>
+    /// </summary>
+    public bool UiPromptsEnabled { get; set; }
+
+    /// <summary>编辑模式自动备份开关（默认开启）。</summary>
+    public bool AutoSaveEnabled
+    {
+        get => _autoSaveEnabled;
+        set => SetProperty(ref _autoSaveEnabled, value);
+    }
+
+    /// <summary>自动备份间隔（秒），默认 10，钳制到 1~86400。</summary>
+    public int AutoSaveSeconds
+    {
+        get => _autoSaveSeconds;
+        set => SetProperty(ref _autoSaveSeconds, Math.Clamp(value, 1, 86400));
+    }
 
     private bool _fileNameAddEnabled;
     private string _fileNamePrefixAdd = string.Empty;
@@ -137,14 +164,17 @@ public sealed class MainViewModel : ObservableObject
         RunCommand = new RelayCommand(_ => Run(fullProcess: true), _ => Files.Count > 0);
         RunReplaceOnlyCommand = new RelayCommand(_ => Run(fullProcess: false), _ => Files.Count > 0);
 
-        // 「删除语言字幕」区里的开始处理：只按勾选的语言过滤正文并写回
+        // 「删除字幕外语」区里的开始处理：只按勾选的语言过滤正文并写回
         RunLanguageOnlyCommand = new RelayCommand(_ => RunLanguageOnly(), _ => Files.Count > 0);
 
         // 本地列表工具条上的「繁=>简」：文件名 + 字幕正文一起转简体，当场落地
         RunToSimplifiedCommand = new RelayCommand(_ => RunToSimplified(), _ => Files.Count > 0);
 
-        // 字幕编辑工具条上的「保存」：把编辑器内容写回原文件（不套任何规则）
-        SaveSubtitleCommand = new RelayCommand(_ => SaveSelectedFile(), _ => SelectedFile is { IsTextFile: true });
+        // 字幕编辑工具条上的「保存」：把编辑器内容写回原文件（不套任何规则）；只读条目不可保存
+        SaveSubtitleCommand = new RelayCommand(_ => SaveSelectedFile(), _ => SelectedFile is { IsTextFile: true, IsReadOnly: false });
+
+        // 「批量替换」区的「应用到编辑器」：把替换规则用在当前编辑的文件内容上（编辑模式专属）
+        ApplyRulesToEditorCommand = new RelayCommand(_ => ApplyRulesToEditor(), _ => SelectedFile is { IsTextFile: true, IsReadOnly: false });
 
         CheckAllFilesCommand = new RelayCommand(_ => SetAllChecked(true), _ => Files.Count > 0);
         UncheckAllFilesCommand = new RelayCommand(_ => SetAllChecked(false), _ => Files.Count > 0);
@@ -180,7 +210,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand RunCommand { get; }
     public RelayCommand RunReplaceOnlyCommand { get; }
 
-    /// <summary>「删除语言字幕」区里的「开始处理」。</summary>
+    /// <summary>「删除字幕外语」区里的「开始处理」。</summary>
     public RelayCommand RunLanguageOnlyCommand { get; }
 
     /// <summary>本地列表工具条上的「繁=&gt;简」：文件名与字幕正文一起繁体转简体。</summary>
@@ -188,6 +218,12 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>字幕编辑工具条上的「保存」（另存为要弹对话框，走代码后置的 Click）。</summary>
     public RelayCommand SaveSubtitleCommand { get; }
+
+    /// <summary>
+    /// 「批量替换」区的「应用到编辑器」：把替换规则用在**当前编辑的文件内容**上并就地写回。
+    /// 只在编辑模式有文本文件时可用 —— 编辑模式下用户关心的是手上这一个文件，不是整批。
+    /// </summary>
+    public RelayCommand ApplyRulesToEditorCommand { get; }
 
     /// <summary>本地列表：勾选全部文件 / 取消全部勾选。</summary>
     public RelayCommand CheckAllFilesCommand { get; }
@@ -318,11 +354,12 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public bool InPlace
-    {
-        get => _inPlace;
-        set => SetProperty(ref _inPlace, value);
-    }
+    /// <summary>
+    /// 处理方式：**永远就地覆盖写回**。
+    /// 「处理方式 / 选择目录」条已于 2026-10-05 按用户要求移除，输出到目录的模式随之下线；
+    /// 保留只读属性是为了让 BuildOptions / 日志等处的判断不用跟着改。
+    /// </summary>
+    public bool InPlace => true;
 
     public bool MakeBackup
     {
@@ -637,21 +674,12 @@ public sealed class MainViewModel : ObservableObject
             {
                 RemoveSelectedFileCommand.RaiseCanExecuteChanged();
                 SaveSubtitleCommand.RaiseCanExecuteChanged();
+                // ⚠️ 这条不刷的话，「替换（应用到编辑器）」按钮在进编辑器后仍是启动时的禁用态 —— 用户点不动，即「查找替换无效」
+                ApplyRulesToEditorCommand.RaiseCanExecuteChanged();
                 EditorStatusText = string.Empty;   // 换文件了，上一条「已保存」提示不该留着
 
-                if (value is not null)
-                {
-                    if (value.IsTextFile)
-                    {
-                        CurrentMode = DisplayMode.Editor;
-                        value.Mode = DisplayMode.Editor;
-                    }
-                    else
-                    {
-                        CurrentMode = DisplayMode.List;
-                        value.Mode = DisplayMode.List;
-                    }
-                }
+                // 2026-10-05 起：**选中不再自动进编辑器**（用户要求改为双击 / 点状态列编辑图标）。
+                // 显式进入编辑器走 OpenInEditor(...)。
             }
         }
     }
@@ -675,6 +703,126 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _editorStatusText;
         private set => SetProperty(ref _editorStatusText, value);
+    }
+
+    /// <summary>给窗口代码后置用的状态栏写入口（查找按钮等直接操作编辑器的功能在此报结果）。</summary>
+    public void SetEditorStatus(string text) => EditorStatusText = text;
+
+    // ---------------- 编码转换（字幕编辑模式工具条下拉） ----------------
+
+    /// <summary>占位项：下拉框默认停在这一项，选到具体编码才触发转换。</summary>
+    public const string EncodingPlaceholder = "转换为编码…";
+
+    /// <summary>编码下拉的选项（占位项在最前，转换完成后弹回它，防误触发）。</summary>
+    public static string[] EncodingChoices { get; } =
+    [
+        EncodingPlaceholder,
+        "UTF-8",
+        "UTF-8（带 BOM）",
+        "GB2312（简体中文）",
+        "GBK（简体中文扩展）",
+        "GB18030（简体中文全集）",
+        "Big5（繁体中文）",
+        "UTF-16 LE（Windows）",
+        "UTF-16 BE",
+    ];
+
+    private string _selectedEncodingChoice = EncodingPlaceholder;
+
+    /// <summary>下拉选中项；选中具体编码即执行转换，完成后弹回占位项。</summary>
+    public string SelectedEncodingChoice
+    {
+        get => _selectedEncodingChoice;
+        set
+        {
+            if (!SetProperty(ref _selectedEncodingChoice, value)) return;
+            if (value is null || value == EncodingPlaceholder) return;
+
+            var ok = ConvertSelectedFileEncoding(value);
+            // 无论成败都弹回占位：同一项再选能再次触发，也避免「显示的编码」被误解成当前文件编码
+            SetProperty(ref _selectedEncodingChoice, EncodingPlaceholder, nameof(SelectedEncodingChoice));
+            _ = ok;
+        }
+    }
+
+    /// <summary>显示名 → 编码实例（找不到的名称返回 null，理论上不会发生）。</summary>
+    private static Encoding? ResolveEncodingByName(string displayName)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return displayName switch
+        {
+            "UTF-8" => new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            "UTF-8（带 BOM）" => new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            "GB2312（简体中文）" => Encoding.GetEncoding("gb2312"),
+            "GBK（简体中文扩展）" => Encoding.GetEncoding("gbk"),
+            "GB18030（简体中文全集）" => Encoding.GetEncoding("gb18030"),
+            "Big5（繁体中文）" => Encoding.GetEncoding("big5"),
+            "UTF-16 LE（Windows）" => Encoding.Unicode,
+            "UTF-16 BE" => Encoding.BigEndianUnicode,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// 把**编辑器当前内容**用目标编码写回原文件（内容字符串不变，只改盘上的字节编码）。
+    /// 有损拦截：内容里有目标编码表示不了的字符（如 GB2312 装不下生僻字）时取消，
+    /// 提示换更大的编码（GBK / GB18030），绝不静默写成 ? 号。
+    /// </summary>
+    public bool ConvertSelectedFileEncoding(string displayName)
+    {
+        var item = SelectedFile;
+        if (item is null || !item.IsTextFile)
+        {
+            EditorStatusText = "二进制文件不能转换编码（只支持文本文件）";
+            return false;
+        }
+
+        if (item.IsReadOnly)
+        {
+            EditorStatusText = "只读文件不能转换编码（没有写入权限）";
+            return false;
+        }
+
+        var target = ResolveEncodingByName(displayName);
+        if (target is null)
+        {
+            EditorStatusText = "未知的编码：" + displayName;
+            return false;
+        }
+
+        var content = item.Content ?? string.Empty;
+
+        if (!TextBatchProcessor.CanEncodeAll(target, content))
+        {
+            EditorStatusText = $"「{displayName}」装不下文件里的部分字符，转换已取消（可改用 GBK / GB18030）";
+            Log($"编码转换取消：{item.OriginalFileName} → {displayName}（存在无法表示的字符）");
+            return false;
+        }
+
+        try
+        {
+            var dir = Path.GetDirectoryName(item.FilePath);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+            WriteAtomic(item.FilePath, content, target, newline);
+
+            item.CurrentEncoding = target;
+            item.MarkSaved();  // 盘上内容已与编辑器一致
+
+            EditorStatusText = $"已转换为 {displayName}";
+            Log($"编码转换：{item.FilePath} → {displayName}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            EditorStatusText = "编码转换失败：" + ex.Message;
+            Log($"编码转换失败：{item.FilePath} → {displayName} - {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -866,16 +1014,36 @@ public sealed class MainViewModel : ObservableObject
         if (Files.Any(x => string.Equals(x.FilePath, path, StringComparison.OrdinalIgnoreCase))) return false;
         var item = new FileItemViewModel { FilePath = path };
 
+        // 写入权限检测：文件 / 所在目录写不了 ⇒ 弹窗问用户「只读模式加入还是不加」。
+        // 无界面环境（离屏校验）不弹窗，静默按只读加入，保证行为可断言。
+        if (!TextBatchProcessor.CanWriteFile(path))
+        {
+            var fileName = Path.GetFileName(path);
+            if (UiPromptsEnabled)
+            {
+                var answer = UiDialog.Show(
+                    $"文件「{fileName}」或其所在目录没有写入权限，无法保存修改。\n\n" +
+                    "是 = 以只读模式加入列表（可查看内容，不能保存）\n" +
+                    "否 = 不添加该文件",
+                    "只读模式", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.Yes) return false;
+            }
+
+            item.IsReadOnly = true;
+            Log($"[只读] {fileName} 没有写入权限，以只读模式加入");
+        }
+
         // 勾选状态变化要驱动「处理范围」提示与预览序号重算
         item.PropertyChanged += FileOnPropertyChanged;
 
         if (item.IsTextFile)
         {
-            var (content, _, newline) = TextBatchProcessor.ReadTextFileContent(item.FilePath);
+            var (content, encoding, newline) = TextBatchProcessor.ReadTextFileContent(item.FilePath);
             if (content is not null)
             {
                 var nl = newline ?? "\n";
                 item.SetOriginalContent(content);   // 语言过滤的基准：磁盘上的原文
+                item.CurrentEncoding = encoding;    // 保存 / 编码转换沿用本次判定的编码
                 var filtered = TextBatchProcessor.ProcessTextContent(content, RemoveEnglish, RemoveJapanese, RemoveKorean, nl);
                 item.SetProgrammaticContent(filtered);
                 item.Mode = DisplayMode.Editor;
@@ -913,6 +1081,9 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void ReturnToList()
     {
+        // 改动没保存就退回列表：先问一声（保存 / 不保存 / 取消），别让用户手滑丢内容
+        if (!ConfirmDiscardOrSaveOnExit()) return;
+
         EditorStatusText = string.Empty;
 
         if (SelectedFile is not null)
@@ -925,9 +1096,170 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 自动备份文件路径：与原文件同目录的「原文件名_bak.原扩展名」（如 subtitle.srt → subtitle_bak.srt）。
+    /// </summary>
+    public static string AutoBackupPath(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath) ?? string.Empty;
+        return Path.Combine(dir, Path.GetFileNameWithoutExtension(filePath) + "_bak" + Path.GetExtension(filePath));
+    }
+
+    /// <summary>
+    /// 自动备份：把编辑器里**未保存**的内容写到 <see cref="AutoBackupPath"/>（沿用当前编码）。
+    /// 内容与上次备份一致时不重复写盘。只读条目 / 非文本 / 没改过一律不动。
+    /// </summary>
+    /// <returns>true = 磁盘上现在有一份与编辑器一致的备份（或本就有且没变）。</returns>
+    public bool WriteAutoBackupNow(FileItemViewModel item)
+    {
+        if (item is not { IsTextFile: true, IsReadOnly: false }) return false;
+        if (!item.IsContentEdited) return false;
+
+        var content = item.Content ?? string.Empty;
+        if (string.Equals(content, _lastAutoBackupContent, StringComparison.Ordinal)) return true;
+
+        try
+        {
+            var encoding = item.CurrentEncoding
+                ?? TextBatchProcessor.ReadTextWithEncodingFallback(item.FilePath).Encoding
+                ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            var bakPath = AutoBackupPath(item.FilePath);
+            File.WriteAllText(bakPath, content, encoding);
+            _lastAutoBackupContent = content;
+            Log($"[自动保存] 已备份「{item.OriginalFileName}」→ {Path.GetFileName(bakPath)}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"[自动保存] 备份失败：{item.OriginalFileName} - {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 删除自动备份文件（手动保存 / 不保存退出时调用）。
+    /// 程序崩溃、被强杀时走不到这里 —— 备份会留在磁盘上，这正是设计意图。
+    /// </summary>
+    public void DeleteAutoBackup(FileItemViewModel item)
+    {
+        _lastAutoBackupContent = null;
+        try
+        {
+            var bakPath = AutoBackupPath(item.FilePath);
+            if (File.Exists(bakPath))
+            {
+                File.Delete(bakPath);
+                Log($"[自动保存] 已删除备份 {Path.GetFileName(bakPath)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[自动保存] 删除备份失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>「未保存的修改」三选一弹窗（是=保存 / 否=不保存 / 取消=留下）。</summary>
+    private MessageBoxResult AskUnsavedChanges()
+    {
+        return UiDialog.Show(
+            $"文件「{SelectedFile!.OriginalFileName}」已修改但尚未保存，是否保存？\n\n" +
+            "是 = 保存并继续\n" +
+            "否 = 不保存（删除自动备份文件）\n" +
+            "取消 = 留在编辑器",
+            "未保存的修改", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+    }
+
+    /// <summary>
+    /// 退出编辑模式 / 关闭程序前的未保存确认。
+    /// 返回 true = 可以继续（已保存 / 放弃保存 / 本来就没改）；false = 用户取消，留在编辑器。
+    /// </summary>
+    public bool ConfirmDiscardOrSaveOnExit()
+    {
+        if (!UiPromptsEnabled || SelectedFile is not { IsContentEdited: true, IsReadOnly: false }) return true;
+
+        var choice = AskUnsavedChanges();
+        if (choice == MessageBoxResult.Cancel) return false;
+        if (choice == MessageBoxResult.Yes) return SaveSelectedFile();
+
+        DeleteAutoBackup(SelectedFile);   // 「取消保存」：备份也一并清掉
+        return true;
+    }
+
+    /// <summary>
     /// 字幕编辑模式下的「保存」：把编辑器里的内容**原样**写回当前文件（保持原编码）。
     /// 与「开始处理」的区别：这里不套任何规则，你看到什么就存什么。
     /// </summary>
+    /// <summary>
+    /// 「批量替换」区的「应用到编辑器」：把左侧替换规则应用到**正在编辑的这个文件**的当前内容上，
+    /// 就地写回（沿用当前编码）并刷新编辑器快照。不涉及改名 / 删行 / 删语言 ——
+    /// 那些回列表模式用各组的「开始」。写回前 .bak 备份照常生效。
+    /// </summary>
+    public bool ApplyRulesToEditor()
+    {
+        var item = SelectedFile;
+        if (item is null || !item.IsTextFile)
+        {
+            EditorStatusText = "先在编辑模式里打开一个文本文件";
+            return false;
+        }
+
+        if (item.IsReadOnly)
+        {
+            EditorStatusText = "只读文件不能应用规则（没有写入权限）";
+            return false;
+        }
+
+        var rules = BuildRules(out var ruleError);
+        if (ruleError is not null)
+        {
+            EditorStatusText = ruleError;
+            Log($"编辑器替换未执行：{ruleError}");
+            return false;
+        }
+
+        if (rules.Count == 0)
+        {
+            EditorStatusText = "替换规则为空：先在「批量替换」里填写查找内容";
+            return false;
+        }
+
+        var content = item.Content ?? string.Empty;
+        var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var replaced = TextBatchProcessor.ApplyReplaceRules(content, rules);
+        if (string.Equals(replaced, content, StringComparison.Ordinal))
+        {
+            EditorStatusText = "替换规则没有匹配到内容（未写回）";
+            Log($"编辑器替换：{item.OriginalFileName} 规则无匹配，内容未变");
+            return true;
+        }
+
+        try
+        {
+            if (MakeBackup)
+            {
+                File.Copy(item.FilePath, NextAvailablePath(item.FilePath + ".bak"), overwrite: true);
+            }
+
+            var encoding = item.CurrentEncoding
+                ?? TextBatchProcessor.ReadTextWithEncodingFallback(item.FilePath).Encoding
+                ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            WriteAtomic(item.FilePath, replaced, encoding, newline);
+
+            // 磁盘已与编辑器一致：基准快照对齐（等同 MarkSaved），否则再点「保存」会把替换结果写回去之前的状态
+            item.SetProgrammaticContent(replaced);
+            item.SetOriginalContent(replaced);
+            item.IsSuccess = true;
+            EditorStatusText = $"已按 {rules.Count} 条替换规则改写并保存";
+            Log($"编辑器替换：{item.OriginalFileName}（{rules.Count} 条规则）已写回原文件");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            EditorStatusText = "替换写回失败：" + ex.Message;
+            Log($"编辑器替换失败：{item.FilePath} - {ex.Message}");
+            return false;
+        }
+    }
+
     public bool SaveSelectedFile()
     {
         var item = SelectedFile;
@@ -939,11 +1271,38 @@ public sealed class MainViewModel : ObservableObject
 
         if (!item.IsTextFile)
         {
-            EditorStatusText = "只有 .srt / .ass / .txt 能保存内容";
+            EditorStatusText = "二进制文件没有可编辑的文本内容";
+            return false;
+        }
+
+        if (item.IsReadOnly)
+        {
+            EditorStatusText = "只读文件不能保存（没有写入权限）";
             return false;
         }
 
         return SaveTextTo(item, item.FilePath, asNewFile: false);
+    }
+
+    /// <summary>
+    /// 给状态栏 / 日志用的编码短标签（如「UTF-8」「GB2312/GBK」「UTF-8（BOM）」）。
+    /// 落盘用哪个编码一目了然，编码转换后才好当场确认「保存按转换后的编码写了」。
+    /// public static：FileItemViewModel.EncodingLabel 也要用它（编辑器底部状态栏绑定）。
+    /// </summary>
+    public static string DescribeEncoding(Encoding encoding)
+    {
+        var name = encoding.CodePage switch
+        {
+            65001 => "UTF-8",
+            936 => "GB2312/GBK",
+            54936 => "GB18030",
+            950 => "Big5",
+            1200 => "UTF-16 LE",
+            1201 => "UTF-16 BE",
+            _ => encoding.WebName
+        };
+
+        return encoding.GetPreamble().Length > 0 ? $"{name}（BOM）" : name;
     }
 
     /// <summary>
@@ -965,8 +1324,9 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
-            // 沿用原文件的编码（gb18030 / UTF-8 BOM…），免得把一个 GBK 字幕存成乱码
-            var (_, encoding) = TextBatchProcessor.ReadTextWithEncodingFallback(item.FilePath);
+            // 沿用拖入时判定的编码；没有（老列表条目 / 异常路径）才重新检测，最后兜底 UTF-8
+            var encoding = item.CurrentEncoding;
+            encoding ??= TextBatchProcessor.ReadTextWithEncodingFallback(item.FilePath).Encoding;
             encoding ??= new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
             var dir = Path.GetDirectoryName(targetPath);
@@ -984,9 +1344,14 @@ public sealed class MainViewModel : ObservableObject
                 item.IsSuccess = true;
             }
 
+            // 手动保存成功 ⇒ 自动备份的使命完成，删掉它（另存为同样算手动保存）
+            DeleteAutoBackup(item);
+
             var name = Path.GetFileName(targetPath);
-            EditorStatusText = asNewFile ? $"已另存为 {name}" : $"已保存 {name}";
-            Log(asNewFile ? $"另存为：{targetPath}" : $"保存：{targetPath}");
+            // 把实际落盘的编码亮出来：编码转换后保存，用户能当场确认写的是转换后的编码
+            var encLabel = DescribeEncoding(encoding);
+            EditorStatusText = asNewFile ? $"已另存为 {name}（编码：{encLabel}）" : $"已保存 {name}（编码：{encLabel}）";
+            Log(asNewFile ? $"另存为：{targetPath}（编码：{encLabel}）" : $"保存：{targetPath}（编码：{encLabel}）");
             return true;
         }
         catch (Exception ex)
@@ -998,7 +1363,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 勾选 / 取消「删除语言字幕」里的语言后，立即把**正在编辑的这个文件**的内容重算一遍。
+    /// 勾选 / 取消「删除字幕外语」里的语言后，立即把**正在编辑的这个文件**的内容重算一遍。
     /// 从磁盘重新读，所以这里也会刷新「原始正文」快照。
     /// </summary>
     private void RefreshSelectedTextContentIfNeeded()
@@ -1392,7 +1757,7 @@ public sealed class MainViewModel : ObservableObject
         UndoAddCommand.RaiseCanExecuteChanged();
         UndoDeleteCommand.RaiseCanExecuteChanged();
 
-        MessageBox.Show($"已撤销重命名：成功 {ok}，失败 {fail}", "撤销", MessageBoxButton.OK, MessageBoxImage.Information);
+        UiDialog.Show($"已撤销重命名：成功 {ok}，失败 {fail}", "撤销", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
 
@@ -1502,6 +1867,82 @@ public sealed class MainViewModel : ObservableObject
         RaiseCommandsCanExecute();
     }
 
+    /// <summary>
+    /// 「移除」按钮 / Delete 键：把列表中选中的文件（**支持 Ctrl / Shift 多选**）从列表里移除。
+    /// 只移出列表，**绝不删除文件本体**。
+    /// </summary>
+    /// <returns>实际移除的个数（0 = 没有可移除的选中项）。</returns>
+    public int RemoveFiles(System.Collections.IList? items)
+    {
+        if (items is null || items.Count == 0) return 0;
+
+        var targets = items.OfType<FileItemViewModel>().Where(Files.Contains).ToList();
+        foreach (var item in targets)
+        {
+            Files.Remove(item);
+        }
+
+        if (targets.Count > 0)
+        {
+            Log($"移除 {targets.Count} 个文件出列表（文件本体保留在磁盘）：{string.Join("、", targets.Select(x => x.OriginalFileName))}");
+            SelectedFile = null;
+            RaiseCommandsCanExecute();
+        }
+
+        return targets.Count;
+    }
+
+    /// <summary>
+    /// 列表内拖动排序：把一组文件整体移动到目标插入位置（**保持组内相对顺序**）。
+    /// insertIndex 是「移除前」的绝对位置：拖到目标行上半 = 插它前面，下半 = 插它后面，
+    /// 拖到空白处 = <c>Files.Count</c>（追加到末尾）。
+    /// 顺序变化经 <see cref="Files"/> 的 CollectionChanged 自动刷新范围提示与预览序号。
+    /// </summary>
+    public void MoveFilesTo(System.Collections.Generic.IReadOnlyList<FileItemViewModel> items, int insertIndex)
+    {
+        if (items is null || items.Count == 0) return;
+
+        // 组内按当前列表顺序排好，整组搬移后相对顺序不变
+        var dragged = items.Where(Files.Contains).OrderBy(Files.IndexOf).ToList();
+        if (dragged.Count == 0) return;
+        if (dragged.Count == Files.Count) return;   // 整个列表一起拖 = 没有可换的位置
+
+        // 先按「移除前」的索引算修正量：被拖项里排在插入点之前的每有一项，插入点左移一格
+        var beforeCount = dragged.Count(i => Files.IndexOf(i) < insertIndex);
+
+        foreach (var item in dragged)
+        {
+            Files.Remove(item);
+        }
+
+        var target = Math.Clamp(insertIndex - beforeCount, 0, Files.Count);
+        for (var i = 0; i < dragged.Count; i++)
+        {
+            Files.Insert(target + i, dragged[i]);
+        }
+    }
+
+    /// <summary>
+    /// 显式进入编辑模式（双击列表行 / 点状态列的编辑图标）。
+    /// 2026-10-05 起选中行**不再**自动进编辑器，只有这条路径会切换到编辑器。
+    /// </summary>
+    public void OpenInEditor(FileItemViewModel? item)
+    {
+        if (item is null || !item.IsTextFile)
+        {
+            if (item is not null) EditorStatusText = "该文件是二进制内容，没有可编辑的文本";
+            return;
+        }
+
+        if (!ReferenceEquals(SelectedFile, item))
+        {
+            SelectedFile = item;
+        }
+
+        CurrentMode = DisplayMode.Editor;
+        item.Mode = DisplayMode.Editor;
+    }
+
     private void RemoveSelectedRule()
     {
         if (Rules.Count <= 1 || SelectedRule is null) return;
@@ -1564,7 +2005,7 @@ public sealed class MainViewModel : ObservableObject
         return result;
     }
 
-    /// <summary>「开始处理 / 批量处理 / 删除语言字幕 / 繁=&gt;简」四个入口共用同一条流水线，差别只在开关。</summary>
+    /// <summary>「开始处理 / 批量处理 / 删除字幕外语 / 繁=&gt;简」四个入口共用同一条流水线，差别只在开关。</summary>
     private enum RunMode
     {
         /// <summary>开始处理：替换 + 删除行 + 删除语言 + 文件名操作。</summary>
@@ -1573,7 +2014,7 @@ public sealed class MainViewModel : ObservableObject
         /// <summary>各规则组里的「开始」：只做替换与文件名操作（不删行、不删语言）。</summary>
         ReplaceAndFileName,
 
-        /// <summary>「删除语言字幕」区里的「开始处理」：只按勾选的语言过滤正文并写回，不改名、不替换。</summary>
+        /// <summary>「删除字幕外语」区里的「开始处理」：只按勾选的语言过滤正文并写回，不改名、不替换。</summary>
         LanguageOnly,
 
         /// <summary>
@@ -1585,7 +2026,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void Run(bool fullProcess) => RunCore(fullProcess ? RunMode.Full : RunMode.ReplaceAndFileName);
 
-    /// <summary>「删除语言字幕」→ 开始处理。</summary>
+    /// <summary>「删除字幕外语」→ 开始处理。</summary>
     private void RunLanguageOnly() => RunCore(RunMode.LanguageOnly);
 
     /// <summary>本地列表工具条 →「繁=&gt;简」。</summary>
@@ -1597,7 +2038,7 @@ public sealed class MainViewModel : ObservableObject
         var languageOnly = mode == RunMode.LanguageOnly;
         var toSimplifiedOnly = mode == RunMode.ToSimplifiedOnly;
 
-        // 「删除语言字幕」「繁=>简」都不碰替换规则与文件名操作，这两块直接当没配：
+        // 「删除字幕外语」「繁=>简」都不碰替换规则与文件名操作，这两块直接当没配：
         // 参数填错也不该拦住这两个按钮（它们本来就与规则无关）
         var ignoreRules = languageOnly || toSimplifiedOnly;
 
@@ -1605,7 +2046,7 @@ public sealed class MainViewModel : ObservableObject
         var rules = ignoreRules ? [] : BuildRules(out ruleError);
         if (!ignoreRules && ruleError is not null)
         {
-            MessageBox.Show(ruleError, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            UiDialog.Show(ruleError, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -1616,20 +2057,14 @@ public sealed class MainViewModel : ObservableObject
 
         if (languageOnly && !rmEn && !rmJp && !rmKr)
         {
-            MessageBox.Show("请先在「删除语言字幕」里勾选要删除的语言（英文 / 日文 / 韩文），再点「开始处理」",
+            UiDialog.Show("请先在「删除字幕外语」里勾选要删除的语言（英文 / 日文 / 韩文），再点「开始处理」",
                 "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (deleteEnabled && (!int.TryParse(DeleteStartLine, out var s) || !int.TryParse(DeleteEndLine, out var e) || s <= 0 || e <= 0 || e < s))
         {
-            MessageBox.Show("删除行范围无效：起始/结束行需为正整数，且结束行 >= 起始行", "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        if (!InPlace && string.IsNullOrWhiteSpace(OutputDirectory))
-        {
-            MessageBox.Show("请选择输出文件夹，或切换为覆盖原文件", "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            UiDialog.Show("删除行范围无效：起始/结束行需为正整数，且结束行 >= 起始行", "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -1639,7 +2074,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (!ignoreRules && !TryValidateFileNameOps(out var fileNameOpsError))
         {
-            MessageBox.Show(fileNameOpsError, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            UiDialog.Show(fileNameOpsError, "参数错误", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -1648,13 +2083,13 @@ public sealed class MainViewModel : ObservableObject
 
         if (fullProcess && rules.Count == 0 && !deleteEnabled && !rmEn && !rmJp && !rmKr && !fileNameOpsEnabled)
         {
-            MessageBox.Show("当前未启用任何处理（替换为空、删除行未启用、语言删除未选择）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show("当前未启用任何处理（替换为空、删除行未启用、语言删除未选择）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (mode == RunMode.ReplaceAndFileName && rules.Count == 0 && !fileNameOpsEnabled)
         {
-            MessageBox.Show("请先填写要替换的内容或启用文件名添加/删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show("请先填写要替换的内容或启用文件名添加/删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1666,28 +2101,28 @@ public sealed class MainViewModel : ObservableObject
             ? $"{targets.Count} 个文件"
             : $"{targets.Count} 个文件（已勾选，共 {Files.Count} 个；未勾选的不会被动到）";
 
-        var outputNote = InPlace ? string.Empty : $"\n结果输出到：{OutputDirectory}（原文件保留）";
+        var outputNote = string.Empty;   // 处理方式条已移除：永远覆盖原文件，没有「输出到目录」的说明可加
 
         var confirmText = mode switch
         {
-            RunMode.LanguageOnly => $"确认对 {scopeNote} 执行「删除语言字幕」（{DescribeLanguageSelection(rmEn, rmJp, rmKr)}）？",
+            RunMode.LanguageOnly => $"确认对 {scopeNote} 执行「删除字幕外语」（{DescribeLanguageSelection(rmEn, rmJp, rmKr)}）？",
             RunMode.ToSimplifiedOnly =>
                 $"确认对 {scopeNote} 执行「繁=>简」？\n\n"
                 + "· 文件名：繁体字转简体（扩展名不动）\n"
-                + "· 字幕正文：.srt / .ass / .txt 一并转换并写回；其它格式只改文件名\n"
+                + "· 文本内容（字幕 / 文本类文件）：一并转换并写回；二进制文件只改文件名\n"
                 + "· 不套用右侧的替换 / 序号 / 添加删除规则"
                 + outputNote,
             RunMode.Full => $"确认处理 {scopeNote}？",
             _ => $"确认仅批量替换 {scopeNote}？",
         };
 
-        var okCancel = MessageBox.Show(confirmText, "确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        var okCancel = UiDialog.Show(confirmText, "确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (okCancel != MessageBoxResult.Yes) return;
 
         var options = toSimplifiedOnly
-            ? BuildToSimplifiedOptions(InPlace, MakeBackup, InPlace ? null : OutputDirectory)
+            ? BuildToSimplifiedOptions(true, MakeBackup, null)
             : languageOnly
-            ? BuildLanguageOnlyOptions(rmEn, rmJp, rmKr, InPlace, MakeBackup, InPlace ? null : OutputDirectory)
+            ? BuildLanguageOnlyOptions(rmEn, rmJp, rmKr, true, MakeBackup, null)
             : new ProcessOptions
             {
                 Rules = rules,
@@ -1697,9 +2132,9 @@ public sealed class MainViewModel : ObservableObject
                 RemoveEnglish = rmEn,
                 RemoveJapanese = rmJp,
                 RemoveKorean = rmKr,
-                InPlace = InPlace,
+                InPlace = true,
                 MakeBackup = MakeBackup,
-                OutputDirectory = InPlace ? null : OutputDirectory,
+                OutputDirectory = null,
 
                 FileNameAddEnabled = fileNameAnchorAddConfigured,
                 FileNamePrefixAdd = FileNamePrefixAdd,
@@ -1732,7 +2167,7 @@ public sealed class MainViewModel : ObservableObject
         //（确认框写「将对 115 网盘中的 N 个文件改名」，日志带 [115] 前缀），别让用户把两边搞混
         Log(mode switch
         {
-            RunMode.LanguageOnly => $"删除语言字幕（本地列表）：{targets.Count} 个文件（列表共 {Files.Count} 个，未勾选的已跳过）",
+            RunMode.LanguageOnly => $"删除字幕外语（本地列表）：{targets.Count} 个文件（列表共 {Files.Count} 个，未勾选的已跳过）",
             RunMode.ToSimplifiedOnly => $"繁=>简（本地列表）：{targets.Count} 个文件（列表共 {Files.Count} 个，未勾选的已跳过）",
             RunMode.Full => $"开始处理（本地列表）：{targets.Count} 个文件（列表共 {Files.Count} 个，未勾选的已跳过）",
             _ => $"仅批量替换（本地列表）：{targets.Count} 个文件（列表共 {Files.Count} 个，未勾选的已跳过）",
@@ -1744,12 +2179,12 @@ public sealed class MainViewModel : ObservableObject
             Log($"批量序号：模板={SequenceTemplate}, 开始={SequenceStart}, 增量={SequenceStep}, 位数={SequenceDigits}");
         }
         Log($"删除行：{(deleteEnabled ? $"已启用（{options.DeleteStartLine}-{options.DeleteEndLine}）" : "未启用")}");
-        Log($"删除语言字幕：{(rmEn || rmJp || rmKr ? DescribeLanguageSelection(rmEn, rmJp, rmKr) : "未启用")}");
+        Log($"删除字幕外语：{(rmEn || rmJp || rmKr ? DescribeLanguageSelection(rmEn, rmJp, rmKr) : "未启用")}");
         if (options.ToSimplified)
         {
             Log("繁=>简：已启用（文件名 + 字幕正文）");
         }
-        Log($"输出：{(InPlace ? "覆盖原文件" : $"输出到 {OutputDirectory}")}");
+        Log("输出：覆盖原文件（写回前按备份开关留 .bak）");
 
         var (ok, fail, skipped) = ProcessTargets(targets, options, rules, deleteEnabled, languageOnly);
 
@@ -1764,14 +2199,14 @@ public sealed class MainViewModel : ObservableObject
         {
             Log(summary);
         }
-        MessageBox.Show($"处理完成：成功 {ok}，失败 {fail}{skippedNote}", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        UiDialog.Show($"处理完成：成功 {ok}，失败 {fail}{skippedNote}", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
         UndoSequenceCommand.RaiseCanExecuteChanged();
         UndoAddCommand.RaiseCanExecuteChanged();
         UndoDeleteCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>
-    /// 构造「删除语言字幕 → 开始处理」用的处理选项：**只带语言开关**，
+    /// 构造「删除字幕外语 → 开始处理」用的处理选项：**只带语言开关**，
     /// 替换规则、文件名添加/删除、批量序号一律留空 —— 这个按钮的语义就是「只删语言、不改名」。
     /// 抽成纯函数，离线校验可以直接断言它的每一项。
     /// </summary>
@@ -1855,6 +2290,15 @@ public sealed class MainViewModel : ObservableObject
         for (var i = 0; i < targets.Count; i++)
         {
             var file = targets[i];
+
+            // 只读条目（拖入时无写入权限）：内容写不了、改名也可能失败，整条跳过
+            if (file.IsReadOnly)
+            {
+                skipped++;
+                file.Preview = "只读，已跳过";
+                Log($"[SKIP] {file.OriginalFileName} - 只读（无写入权限），不参与处理");
+                continue;
+            }
 
             // 语言删除只对字幕 / 文本类有意义：其余文件原样跳过，一个字节都不动
             if (languageOnly && !file.IsTextFile)
@@ -1998,12 +2442,12 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>
     /// 就地保存的「动作描述」（不含开头的「已」），由实际生效的开关拼出来（不再靠调用方传进来的模式标志猜）：
-    /// 无开关 → 「覆盖保存」；只删语言 → 「删除语言字幕并保存」；只繁转简 → 「繁转简并保存」；两者都做则依次列出。
+    /// 无开关 → 「覆盖保存」；只删语言 → 「删除字幕外语并保存」；只繁转简 → 「繁转简并保存」；两者都做则依次列出。
     /// </summary>
     private static string BuildInPlaceSavedAction(ProcessOptions options)
     {
         var notes = new List<string>();
-        if (options.RemoveEnglish || options.RemoveJapanese || options.RemoveKorean) notes.Add("删除语言字幕");
+        if (options.RemoveEnglish || options.RemoveJapanese || options.RemoveKorean) notes.Add("删除字幕外语");
         if (options.ToSimplified) notes.Add("繁转简");
         return notes.Count > 0 ? $"{string.Join("、", notes)}并保存" : "覆盖保存";
     }
@@ -2025,7 +2469,7 @@ public sealed class MainViewModel : ObservableObject
             var content = baseContent;
             var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
 
-            // 删除语言字幕：按当前勾选的语言过滤正文。
+            // 删除字幕外语：按当前勾选的语言过滤正文。
             // 放在最前面，「删除行范围」的行号才对得上编辑器里看到的行号；
             // 过滤本身是幂等的，对已过滤的内容再跑一次结果不变。
             if (options.RemoveEnglish || options.RemoveJapanese || options.RemoveKorean)
@@ -2081,9 +2525,10 @@ public sealed class MainViewModel : ObservableObject
                 return new ProcessResult { Success = true, Message = "已是简体，无需修改" };
             }
 
-            // Read original encoding for writing
-            var (_, encoding) = TextBatchProcessor.ReadTextWithEncodingFallback(file.FilePath);
-            encoding ??= new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            // Read original encoding for writing（优先拖入时判定的编码，避免重检测猜错）
+            var encoding = file.CurrentEncoding
+                ?? TextBatchProcessor.ReadTextWithEncodingFallback(file.FilePath).Encoding
+                ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
             if (options.InPlace)
             {
@@ -2169,21 +2614,42 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             File.WriteAllText(tmp, content, encoding);
-
-            if (File.Exists(path))
-            {
-                File.Replace(tmp, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
-            }
-            else
-            {
-                File.Move(tmp, path);
-            }
+            ReplaceWithRetry(tmp, path);
         }
         finally
         {
             if (File.Exists(tmp))
             {
                 File.Delete(tmp);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 落盘替换带短暂重试：刚写完的文件常被杀软实时扫描短暂独占（无共享打开），
+    /// File.Replace / File.Move 会随机抛 IOException —— 保存「偶发失败」就是这么来的。
+    /// 重试 5 次（50ms 递增）足以躲过扫描窗口；仍失败就把异常抛给调用方正常报错。
+    /// </summary>
+    private static void ReplaceWithRetry(string tmp, string target)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (File.Exists(target))
+                {
+                    File.Replace(tmp, target, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                }
+                else
+                {
+                    File.Move(tmp, target);
+                }
+
+                return;
+            }
+            catch (Exception ex) when (attempt < 5 && ex is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(50 * attempt);
             }
         }
     }
