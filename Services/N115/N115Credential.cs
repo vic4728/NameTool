@@ -7,6 +7,14 @@ namespace NameTool.Services.N115;
 /// <summary>
 /// 115 账号凭据。网页版登录成功后拿到的是 4 个 Cookie（UID/CID/SEID/KID），
 /// 后续所有 webapi 请求都靠它们鉴权。
+/// <para>
+/// 2026-10-06 起支持双通道授权并存（见 N115LoginWindow 单页重构）：
+/// <list type="bullet">
+/// <item><b>Cookie</b>（网页扫码）：模拟某台设备上的客户端，占一个设备登录位（同类互踢）；</item>
+/// <item><b>OpenAPI</b>（开放平台 OAuth2.0，需自定义 AppID）：access/refresh token，不占设备位、自动续期。</item>
+/// </list>
+/// 旧 json 里没有新字段时反序列化得到空串，不影响 <see cref="IsValid"/>。
+/// </para>
 /// </summary>
 public sealed class N115Credential
 {
@@ -18,6 +26,36 @@ public sealed class N115Credential
     public string UserName { get; set; } = string.Empty;
     public long UserId { get; set; }
     public DateTimeOffset SavedAt { get; set; } = DateTimeOffset.Now;
+
+    // ---- 双通道扩展（2026-10-06）----
+
+    /// <summary>Cookie 授权所用的设备通道（如 os_mac / tv / harmony）；空 = 从未用扫码 Cookie。</summary>
+    public string CookieDevice { get; set; } = string.Empty;
+
+    /// <summary>OpenAPI 应用 AppID（用户在 115 开放平台申请）。</summary>
+    public string ApiAppId { get; set; } = string.Empty;
+
+    /// <summary>OpenAPI 授权时间。</summary>
+    public DateTimeOffset ApiSavedAt { get; set; }
+
+    /// <summary>OpenAPI access_token（短期，官方未公布确切时长）。</summary>
+    public string ApiAccessToken { get; set; } = string.Empty;
+
+    /// <summary>OpenAPI refresh_token（长期，用它换新 access_token）。</summary>
+    public string ApiRefreshToken { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 115 接口偏好：true = 优先 OpenAPI（默认 false = 优先 Cookie）。
+    /// 业务接口 OpenAPI 化接入后此偏好生效；当前版本仅记住选择。
+    /// </summary>
+    public bool PreferOpenApi { get; set; }
+
+    [JsonIgnore]
+    public bool HasOpenApi => !string.IsNullOrWhiteSpace(ApiRefreshToken);
+
+    /// <summary>是否已有任何一种授权（Cookie 或 OpenAPI）。</summary>
+    [JsonIgnore]
+    public bool HasAny => IsValid || HasOpenApi;
 
     [JsonIgnore]
     public bool IsValid =>

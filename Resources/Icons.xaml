@@ -39,6 +39,9 @@
         </DrawingImage.Drawing>
     </DrawingImage>
 
+    <!-- 新建文件夹图标已改为 Images/ico/new file-ico.png（256px 高清位图，见 MainWindow 路径栏按钮），
+         手工转换的 IconFolderNew 已删除 —— 手工抄 path 会与原图不一致。 -->
+
     <!-- 字幕 .srt / .ass　（sub_file_icon.svg） -->
     <DrawingImage x:Key="IconSubtitle">
         <DrawingImage.Drawing>

@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         Vm.N115.LoginPrompt = ShowN115LoginAsync;
         Vm.N115.FolderPicker = ShowN115FolderPickerAsync;
         Vm.N115.RenamePrompt = ShowN115RenameDialog;
+        Vm.N115.NewFolderPrompt = ShowN115NewFolderDialog;
         Vm.N115.SelectionCleared += ClearN115Selection;
         Vm.N115.SelectionRequested += SelectN115Items;
         Vm.N115.SortChanged += SyncN115SortArrows;
@@ -216,6 +217,22 @@ public partial class MainWindow : Window
         return dialog.ShowDialog() == true ? dialog.NewName : null;
     }
 
+    /// <summary>「新建文件夹命名」弹窗：返回用户输入的目录名，取消返回 null。</summary>
+    private string? ShowN115NewFolderDialog()
+    {
+        var dialog = new N115NewFolderWindow { Owner = this };
+        return dialog.ShowDialog() == true ? dialog.FolderName : null;
+    }
+
+    /// <summary>路径栏右侧的「新建文件夹」图标按钮（图标 = Images\ico\new file-ico.png）。</summary>
+    private void N115NewFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (Vm.N115.CreateFolderCommand.CanExecute(null))
+        {
+            Vm.N115.CreateFolderCommand.Execute(null);
+        }
+    }
+
     private async void OpenN115_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -368,7 +385,28 @@ public partial class MainWindow : Window
     /// </summary>
     private void N115Grid_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (!IsParentEntryRow(FindAncestor<System.Windows.Controls.DataGridRow>(e.OriginalSource as DependencyObject)))
+        var pressedRow = FindAncestor<System.Windows.Controls.DataGridRow>(e.OriginalSource as DependencyObject);
+
+        // 记录按下位置：按住左键移出阈值 → 进入「拖动到目录内移动」。
+        // 「返回上级」行是导航伪条目（点一下就回上级），不能作为拖动源。
+        _n115DragRow = IsParentEntryRow(pressedRow) ? null : pressedRow;
+        _n115DragStart = e.GetPosition(N115Grid);
+
+        // 整组拖动快照（时机关键，见 _n115DragItems 注释）：无修饰键 + 按在已选中行上时，
+        // 在 DataGrid 塌缩选择之前把整组选中抄走。带 Ctrl/Shift 时选择会先落地（取消 / 范围选），
+        // 不快照，起拖走 MouseMove 里的实时选择逻辑。
+        _n115DragItems = null;
+        if (pressedRow?.Item is N115ItemViewModel { IsParentEntry: false } pressedItem
+            && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.None
+            && N115Grid.SelectedItems.Contains(pressedItem))
+        {
+            _n115DragItems = N115Grid.SelectedItems
+                .OfType<N115ItemViewModel>()
+                .Where(x => !x.IsParentEntry)
+                .ToList();
+        }
+
+        if (!IsParentEntryRow(pressedRow))
         {
             return;
         }
@@ -402,6 +440,159 @@ public partial class MainWindow : Window
         {
             Vm.N115.EnterFolder(folder);
         }
+    }
+
+    // ---------------- 115 网盘列表：拖动文件 / 文件夹到目录内移动 ----------------
+
+    /// <summary>网盘列表内部拖动用的自定义 DataObject 格式（不会与外部文件拖入的 FileDrop 混淆）。</summary>
+    private const string N115MoveFormat = "NameTool.N115Move";
+
+    /// <summary>按下时所在的行（null = 按在表头 / 滚动条 / 「返回上级」行上，不起拖）。</summary>
+    private System.Windows.Controls.DataGridRow? _n115DragRow;
+
+    /// <summary>
+    /// 按下瞬间（隧道阶段）快照的拖动集合。⚠️ DataGrid 的行选择在 bubble 的 MouseDown 里**立即执行**，
+    /// 多选状态下按下其中一行会把选择塌缩成这一行（DataGridCell.OnAnyMouseLeftButtonDown →
+    /// MakeFullRowSelection）——必须赶在它之前把整组选中抄走，起拖才能整组移动。
+    /// null = 按下时带了修饰键或按在未选中行上，走 MouseMove 里的实时选择逻辑。
+    /// </summary>
+    private List<N115ItemViewModel>? _n115DragItems;
+
+    /// <summary>按下时的位置（判断是否移出系统拖动阈值）。</summary>
+    private Point _n115DragStart;
+
+    /// <summary>拖动悬停时高亮的放置目标行（换行 / 拖动结束时恢复原底色）。</summary>
+    private System.Windows.Controls.DataGridRow? _n115DropHighlightRow;
+
+    /// <summary>
+    /// 按住左键移动：移出拖动阈值 → 起拖。按下的是选中项 → **整组选中一起拖**（与本地列表排序一致）；
+    /// 按在未选中行上 → 只拖这一条。Busy 中不起拖。
+    /// </summary>
+    private void N115Grid_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed)
+        {
+            _n115DragRow = null;
+            return;
+        }
+
+        if (_n115DragRow is null || Vm.N115.IsBusy)
+        {
+            return;
+        }
+
+        var pos = e.GetPosition(N115Grid);
+        if (Math.Abs(pos.X - _n115DragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(pos.Y - _n115DragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        var sourceRow = _n115DragRow;
+        _n115DragRow = null;   // 一次按压只起拖一次
+
+        if (sourceRow.Item is not N115ItemViewModel pressed || pressed.IsParentEntry) return;
+
+        // 优先用按下瞬间的整组快照（DataGrid 在 MouseDown 已把选择塌缩成一行，实时读会只剩一条）；
+        // 没快照（带修饰键 / 按在未选中行上）→ 按实时选择判断，行为与原先一致
+        var items = _n115DragItems
+            ?? (Vm.N115.SelectedItems.Contains(pressed)
+                ? Vm.N115.SelectedItems.Where(x => !x.IsParentEntry).ToList()
+                : [pressed]);
+        if (items.Count == 0) return;
+
+        var data = new DataObject(N115MoveFormat, items);
+        DragDrop.DoDragDrop(sourceRow, data, System.Windows.DragDropEffects.Move);
+
+        _n115DragItems = null;   // 一次按压只拖一次，快照作废
+
+        // 拖动结束（无论落到哪）：目标行高亮必须收干净
+        ClearN115DropHighlight();
+    }
+
+    /// <summary>
+    /// 拖动悬停：目标是**文件夹行**（移进它）或**「返回上级」行**（移到上一级，根目录除外）时
+    /// 允许放置并高亮该行；文件行 / 表头 / 空白处显示禁止光标。外部文件拖入（FileDrop）不接管。
+    /// </summary>
+    private void N115Grid_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(N115MoveFormat)) return;   // 其它拖动（如外部文件）按原逻辑走
+        e.Handled = true;
+
+        var items = e.Data.GetData(N115MoveFormat) as IReadOnlyList<N115ItemViewModel>;
+        var row = FindAncestor<System.Windows.Controls.DataGridRow>(e.OriginalSource as DependencyObject);
+
+        if (items is null || items.Count == 0 || row is null || !IsValidN115DropTarget(row, items))
+        {
+            e.Effects = System.Windows.DragDropEffects.None;
+            ClearN115DropHighlight();
+            return;
+        }
+
+        e.Effects = System.Windows.DragDropEffects.Move;
+        SetN115DropHighlight(row);
+    }
+
+    /// <summary>拖出列表（或行间移动时从旧行离开）：收高亮。行间移动 DragOver 会随即重画，无闪烁问题。</summary>
+    private void N115Grid_DragLeave(object sender, System.Windows.DragEventArgs e)
+    {
+        ClearN115DropHighlight();
+    }
+
+    /// <summary>松手：目标有效才移动；文件行 / 空白处松手什么都不做。移动走 VM 的 <see cref="N115ViewModel.MoveByDragAsync"/>。</summary>
+    private async void N115Grid_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        ClearN115DropHighlight();
+        if (!e.Data.GetDataPresent(N115MoveFormat)) return;
+        e.Handled = true;
+
+        if (e.Data.GetData(N115MoveFormat) is not IReadOnlyList<N115ItemViewModel> items || items.Count == 0)
+        {
+            return;
+        }
+
+        var row = FindAncestor<System.Windows.Controls.DataGridRow>(e.OriginalSource as DependencyObject);
+        if (row?.Item is not N115ItemViewModel target || !IsValidN115DropTarget(row, items))
+        {
+            return;
+        }
+
+        await Vm.N115.MoveByDragAsync(items, target);
+    }
+
+    /// <summary>松手处能否作为移动目标：文件夹行（不在拖动集合里）或「返回上级」行（当前在子目录里）。</summary>
+    private bool IsValidN115DropTarget(System.Windows.Controls.DataGridRow? row, IReadOnlyList<N115ItemViewModel> dragged)
+    {
+        if (Vm.N115.IsBusy) return false;
+        if (row?.Item is not N115ItemViewModel target) return false;
+
+        if (target.IsParentEntry)
+        {
+            return Vm.N115.CurrentPath.Count > 1;
+        }
+
+        if (!target.IsDirectory) return false;
+
+        // 目标自己也在拖动集合里（整组选中拖动）→ 不能移进自己
+        return !dragged.Any(x => ReferenceEquals(x, target));
+    }
+
+    /// <summary>高亮当前放置目标行：本地值盖过样式触发器（文件夹浅蓝 / 选中蓝），ClearValue 即还原。</summary>
+    private void SetN115DropHighlight(System.Windows.Controls.DataGridRow row)
+    {
+        if (ReferenceEquals(_n115DropHighlightRow, row)) return;
+
+        ClearN115DropHighlight();
+        _n115DropHighlightRow = row;
+        row.Background = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#BFDFFF"));
+    }
+
+    /// <summary>收掉放置目标行的高亮，底色交还给行样式（文件夹浅蓝 / 选中蓝 / 白）。</summary>
+    private void ClearN115DropHighlight()
+    {
+        _n115DropHighlightRow?.ClearValue(System.Windows.Controls.DataGridRow.BackgroundProperty);
+        _n115DropHighlightRow = null;
     }
 
     /// <summary>
@@ -771,7 +962,12 @@ public partial class MainWindow : Window
         try
         {
             var result = await _updateService.CheckForUpdateAsync();
-            if (result.Status != UpdateStatus.UpdateAvailable || string.IsNullOrWhiteSpace(result.FileName))
+
+            // 该版本被用户「忽略更新」过 → 启动时不再提示（手动点「检查更新」仍会弹窗）
+            var ignored = !string.IsNullOrWhiteSpace(result.NewVersion)
+                && string.Equals(UpdateService.GetIgnoredVersion(), result.NewVersion, StringComparison.Ordinal);
+
+            if (result.Status != UpdateStatus.UpdateAvailable || string.IsNullOrWhiteSpace(result.FileName) || ignored)
             {
                 UpdateNoticeText.Visibility = Visibility.Collapsed;
                 _pendingUpdateFileName = null;
@@ -1193,19 +1389,29 @@ public partial class MainWindow : Window
                     _pendingUpdateFileName = result.FileName;
                     _pendingUpdateDownloadUrl = result.DownloadUrl;
                     UpdateNoticeText.Visibility = Visibility.Visible;
-                    var sizeText = string.IsNullOrWhiteSpace(result.FileSize) ? ""
-                        : $"\n文件大小：{result.FileSize}";
-                    // 更新内容（大白话）从服务器 release-notes.json 取；没配就用兜底说明
+
+                    // 更新内容（大白话）从服务器 release-notes.json 取；没配就用兜底说明。
+                    // 手动点「检查更新」永远弹窗 —— 即使该版本之前被「忽略更新」过。
                     var notes = result.Notes is { Count: > 0 } ? result.Notes : ["修复了一些问题，用起来更稳"];
-                    var notesText = "\n\n本次更新内容：" + string.Join("", notes.Select(n => $"\n· {n}"));
-                    var confirm = UiDialog.Show(this,
-                        $"{result.Message}{sizeText}{notesText}\n\n是否立即下载更新？",
-                        "发现新版本",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Question);
-                    if (confirm == MessageBoxResult.Yes)
+                    var prompt = new UpdatePromptWindow(
+                        result.NewVersion ?? "",
+                        UpdateService.GetCurrentVersion().ToString(),
+                        result.FileSize,
+                        notes)
+                    { Owner = this };
+                    prompt.ShowDialog();
+
+                    if (prompt.Action == UpdatePromptAction.Update)
                     {
                         await DownloadAndInstallAsync(result.FileName!, result.DownloadUrl);
+                    }
+                    else if (prompt.Action == UpdatePromptAction.Ignore)
+                    {
+                        // 记住该版本：启动自动检查不再亮红字提示；标题栏提示一并收掉
+                        UpdateService.SetIgnoredVersion(result.NewVersion);
+                        UpdateNoticeText.Visibility = Visibility.Collapsed;
+                        _pendingUpdateFileName = null;
+                        _pendingUpdateDownloadUrl = null;
                     }
                     break;
 
@@ -1445,6 +1651,14 @@ public partial class MainWindow : Window
     private void Window_PreviewDrop(object sender, System.Windows.DragEventArgs e)
     {
         SetDropHintVisible(false);
+
+        // 网盘列表内部的「拖动到目录移动」也走这条隧道（tunnel 先于 N115Grid 的气泡 Drop 到达）：
+        // 必须在这里放行，否则下面的 IsActive 分支把它标记 Handled，N115Grid_Drop 永远收不到 ——
+        // 表现就是「拖动后无响应」。先查内部格式再谈接管，顺序不能反。
+        if (e.Data.GetDataPresent(N115MoveFormat))
+        {
+            return;
+        }
 
         if (Vm.N115.IsActive)
         {

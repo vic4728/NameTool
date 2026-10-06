@@ -47,9 +47,7 @@
             <Setter Property="Source" Value="{Binding IconKey, Converter={StaticResource IconLookup}}"/>
         </Style>
 
-        <!-- 编辑图标（铅笔）：几何数据来自 Assets/Edit-ico.svg（WPF 不能直接渲染 SVG，
-             故把 path 数据抄成 Geometry 用 Path 绘制，两处保持一致）。24×24 视图。 -->
-        <Geometry x:Key="EditIconGeometry">M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z</Geometry>
+        <!-- 编辑图标已改为 Images/ico/Edit-ico-1.png（256px 高清位图，见文件列表行内按钮）。 -->
 
         <Style TargetType="Button">
             <Setter Property="Background" Value="#FFFFFF"/>
@@ -545,7 +543,7 @@
                         <Button Content="复制到…" Command="{Binding N115.CopyToCommand}" Width="76" Height="30" Margin="0,0,6,0"
                                 ToolTip="把选中项复制到你挑选的目录，原位置内容不变"/>
                         <Button Content="重命名" Command="{Binding N115.RenameSingleCommand}" Width="76" Height="30" Margin="0,0,6,0"
-                                ToolTip="给单个文件改名字：弹窗里填新名字，确认后立即生效（不套用右侧任何规则）。&#10;只支持单个文件 —— 多选或文件夹时不可用；&#10;批量 / 文件夹改名请用表格底部的「按右侧规则重命名」"/>
+                                ToolTip="给单个文件或文件夹改名字：弹窗里填新名字，确认后立即生效（不套用右侧任何规则）。&#10;只支持单个条目 —— 多选时不可用；&#10;批量改名请用表格底部的「按右侧规则重命名」"/>
                         <Button Content="删除" Command="{Binding N115.DeleteSelectedCommand}" Width="60" Height="30" Margin="0,0,6,0"
                                 Foreground="#C0392B" BorderBrush="#E8A9A9"
                                 ToolTip="删除选中项（进入 115 回收站，可在 115 网页版恢复）"/>
@@ -554,10 +552,10 @@
 
                     <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
                         <TextBlock Text="{Binding N115.AccountText}" VerticalAlignment="Center" Foreground="#4F6E95" Margin="0,0,8,0" FontWeight="Bold"/>
-                        <Button Content="退出登录" Command="{Binding N115.LogoutCommand}" Height="30"/>
+                        <Button Content="退出登录" Command="{Binding N115.LogoutCommand}" Width="88" Height="30" Margin="4,0,0,0"/>
                     </StackPanel>
 
-                    <!-- 当前路径：按钮行下方独占一行 -->
+                    <!-- 当前路径：按钮行下方独占一行；行尾挂「新建文件夹」图标按钮（在当前目录创建） -->
                     <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
                             Margin="0,8,0,0"
                             Background="#F6FBFF"
@@ -569,6 +567,7 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
                             <TextBlock Grid.Column="0" Text="路径：" VerticalAlignment="Center"
@@ -600,6 +599,16 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </ScrollViewer>
+
+                            <!-- 新建文件夹：图标按钮（Images/ico/new file-ico.png），
+                                 建在路径栏当前所在的目录里 -->
+                            <Button Grid.Column="2" Click="N115NewFolder_Click"
+                                    Width="24" Height="24" Padding="0"
+                                    VerticalAlignment="Center" Margin="6,0,0,0"
+                                    ToolTip="在当前目录新建文件夹">
+                                <Image Source="/Images/ico/new%20file-ico.png"
+                                       Width="16" Height="16" Stretch="Uniform"/>
+                            </Button>
                         </Grid>
                     </Border>
                 </Grid>
@@ -832,9 +841,9 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Button.Style>
-                                            <Path Data="{StaticResource EditIconGeometry}"
-                                                  Fill="#1890FF" Width="13" Height="13"
-                                                  Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            <Image Source="/Images/ico/Edit-ico-1.png"
+                                                   Width="16" Height="16"
+                                                   Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Button>
                                     </StackPanel>
                                 </DataTemplate>
@@ -959,8 +968,22 @@
                                            ToolTip="单击选中一个；Ctrl + 单击多选；Shift + 单击连选。&#10;文件和文件夹需分开选，不能在同一次操作里一起改名。"
                                            Foreground="#4F6E95" Text="{Binding N115.SelectionSummary}"/>
                                 <TextBlock VerticalAlignment="Center" Margin="10,0,0,0"
-                                           Foreground="#8A94A6" TextTrimming="CharacterEllipsis"
-                                           Text="{Binding N115.StatusText}"/>
+                                           TextTrimming="CharacterEllipsis"
+                                           Text="{Binding N115.StatusText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#8A94A6"/>
+                                            <!-- 执行中（加载 / 改名 / 拖动移动等）红字加粗：
+                                                 拖放移动没有确认框，松手后靠它确认「已经在执行」 -->
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding N115.IsBusy}" Value="True">
+                                                    <Setter Property="Foreground" Value="#D62828"/>
+                                                    <Setter Property="FontWeight" Value="Bold"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </DockPanel>
 
                             <!-- 第 2 行：操作按钮。按「选择」与「改名」分两组，组间一条竖细线；
@@ -1019,7 +1042,12 @@
                               Sorting="N115Grid_Sorting"
                               SelectionChanged="N115Grid_SelectionChanged"
                               PreviewMouseLeftButtonDown="N115Grid_PreviewMouseLeftButtonDown"
-                              MouseDoubleClick="N115Grid_MouseDoubleClick">
+                              MouseDoubleClick="N115Grid_MouseDoubleClick"
+                              AllowDrop="True"
+                              MouseMove="N115Grid_MouseMove"
+                              DragOver="N115Grid_DragOver"
+                              DragLeave="N115Grid_DragLeave"
+                              Drop="N115Grid_Drop">
                         <!-- 与本地列表同一套列宽记忆（落盘键不同：local / n115） -->
                         <DataGrid.ContextMenu>
                             <ContextMenu>

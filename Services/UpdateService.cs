@@ -142,6 +142,57 @@ public sealed class UpdateService
         return Version.TryParse(infoVersion, out var v) ? v : new Version(0, 0, 0);
     }
 
+    /// <summary>「忽略更新」的落盘文件名（内容就是一个版本号字符串，如 2.0.0）。</summary>
+    private const string IgnoredVersionFileName = "update-ignored.txt";
+
+    /// <summary>
+    /// 用户「忽略更新」时记下的版本号；没记过返回 null。
+    /// 只影响启动自动检查的提示（该版本不再亮红字）；手动点「检查更新」永远照常弹窗。
+    /// </summary>
+    public static string? GetIgnoredVersion()
+    {
+        foreach (var dir in AppDataPaths.ReadDirectories)
+        {
+            try
+            {
+                var path = Path.Combine(dir, IgnoredVersionFileName);
+                if (!File.Exists(path)) continue;
+
+                var text = File.ReadAllText(path).Trim();
+                if (text.Length > 0) return text;
+            }
+            catch
+            {
+                // 单个候选目录读不了（不存在 / 无权限）就找下一个
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>记录 / 清除忽略的版本号（<paramref name="version"/> 为空即清除）。写失败静默——只是使用习惯，不值得拦人。</summary>
+    public static void SetIgnoredVersion(string? version)
+    {
+        try
+        {
+            var path = AppDataPaths.Combine(IgnoredVersionFileName);
+            AppDataPaths.TryEnsureDirectory(AppDataPaths.PrimaryDirectory);
+
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            else
+            {
+                File.WriteAllText(path, version.Trim());
+            }
+        }
+        catch
+        {
+            // 写不进去不影响本次使用，只是下次启动会再提示一次
+        }
+    }
+
     /// <summary>
     /// 从文件名中提取版本号，如 NameTool_v1.2.0_Setup.exe → 1.2.0
     /// </summary>

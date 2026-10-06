@@ -2679,7 +2679,9 @@ public sealed class MainViewModel : ObservableObject
 
     public void Log(string message)
     {
-        Logs.Add(message);
+        // 日志窗口每条带时间戳（用户要求，2026-10-06）；落盘文件由 FileLogSink 自带时间戳 + 级别，
+        // 所以那里仍传原始 message，避免一行出现两个时间戳
+        Logs.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
         FileLogSink.Write(message);
     }
 
@@ -2689,7 +2691,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     public void LogError(string message)
     {
-        Logs.Add(message);
+        Logs.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ERROR] {message}");
         FileLogSink.Write(message, "ERROR");
     }
 

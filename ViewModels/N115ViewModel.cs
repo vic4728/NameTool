@@ -106,6 +106,7 @@ public sealed class N115ViewModel : ObservableObject
         RenameSingleCommand = new AsyncRelayCommand(_ => RenameSingleAsync(), _ => CanRenameSingle);
         MoveToCommand = new AsyncRelayCommand(_ => TransferAsync(move: true), _ => !IsBusy && _selection.Count > 0);
         CopyToCommand = new AsyncRelayCommand(_ => TransferAsync(move: false), _ => !IsBusy && _selection.Count > 0);
+        CreateFolderCommand = new AsyncRelayCommand(_ => CreateFolderAsync(), _ => !IsBusy);
         DeleteSelectedCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync(), _ => !IsBusy && _selection.Count > 0);
         ReloginCommand = new AsyncRelayCommand(_ => ReloginAsync(), _ => !IsBusy);
         LogoutCommand = new RelayCommand(_ => Logout(), _ => !IsBusy);
@@ -123,6 +124,9 @@ public sealed class N115ViewModel : ObservableObject
     /// 返回 null 表示用户取消。放在宿主里弹窗，ViewModel 才能离线跑完整条链路（注入假弹窗即可）。
     /// </summary>
     public Func<string, string?>? RenamePrompt { get; set; }
+
+    /// <summary>由宿主窗口注入：弹出「新建文件夹命名」弹窗，返回用户输入的目录名；null 表示用户取消。</summary>
+    public Func<string?>? NewFolderPrompt { get; set; }
 
     /// <summary>当前所在目录链（选择器用它作为起点，保证面包屑完整）。</summary>
     public IReadOnlyList<(string Id, string Name)> CurrentPath => _path.ToList();
@@ -154,6 +158,7 @@ public sealed class N115ViewModel : ObservableObject
     public AsyncRelayCommand RenameSingleCommand { get; }
     public AsyncRelayCommand MoveToCommand { get; }
     public AsyncRelayCommand CopyToCommand { get; }
+    public AsyncRelayCommand CreateFolderCommand { get; }
     public AsyncRelayCommand DeleteSelectedCommand { get; }
     public AsyncRelayCommand ReloginCommand { get; }
     public RelayCommand LogoutCommand { get; }
@@ -727,6 +732,9 @@ public sealed class N115ViewModel : ObservableObject
 
     // ---------------- 选择 ----------------
 
+    /// <summary>当前选中项（只读视图）。拖动移动用：按下的是选中项 → 整组选中一起拖。</summary>
+    public IReadOnlyList<N115ItemViewModel> SelectedItems => _selection;
+
     /// <summary>由 DataGrid.SelectionChanged 推入当前选中项（支持 Shift / Ctrl 多选）。</summary>
     public void UpdateSelection(System.Collections.IList selectedItems)
     {
@@ -777,11 +785,11 @@ public sealed class N115ViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 「重命名」的可用条件：空闲 + 选中**恰好 1 项** + 该项是**文件**（不是文件夹）。
-    /// 多选或文件夹都不可用 —— 这个按钮的语义就是「改这一个文件的名字」，
-    /// 批量与文件夹那两条路分别由底部的「按规则重命名」和「繁=>简」承担。
+    /// 「重命名」的可用条件：空闲 + 选中**恰好 1 项**（文件或文件夹均可）。
+    /// 2026-10-06 起放开文件夹限制（用户反馈选目录时按钮不可用）：115 的改名接口
+    /// fid[] 对文件夹同样接受（批量「按规则重命名」一直在用文件夹 cid），弹窗标题不变。
     /// </summary>
-    public bool CanRenameSingle => !IsBusy && _selection.Count == 1 && !_selection[0].IsDirectory;
+    public bool CanRenameSingle => !IsBusy && _selection.Count == 1;
 
     /// <summary>
     /// 纯函数：单文件重命名的名称校验。通过返回 null，否则返回给用户看的错误文案。
@@ -1045,20 +1053,13 @@ public sealed class N115ViewModel : ObservableObject
 
         if (_selection.Count != 1)
         {
-            UiDialog.Show("「重命名」一次只能改一个文件。\n\n请只选中一个文件再试；"
+            UiDialog.Show("「重命名」一次只能改一个条目。\n\n请只选中一个文件或文件夹再试；"
                             + "批量改名请用表格底部的「按右侧规则重命名」。",
                 "115 网盘 · 重命名", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         var item = _selection[0];
-        if (item.IsDirectory)
-        {
-            UiDialog.Show($"「{item.Name}」是文件夹，不能用这个按钮改名。\n\n"
-                            + "文件夹改名请用表格底部的「按右侧规则重命名」。",
-                "115 网盘 · 重命名", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
 
         var oldName = item.Name;
         var input = RenamePrompt(oldName);
@@ -1178,6 +1179,139 @@ public sealed class N115ViewModel : ObservableObject
     }
 
     // ---------------- 移动到 / 复制到 / 删除 ----------------
+
+    /// <summary>
+    /// 新建文件夹：弹「新建文件夹命名」窗输入名字，在**当前目录**下创建。
+    /// 名称上限与改名同一条规则（255 UTF-8 字节）；成功后**整目录重载** ——
+    /// 文件夹置顶 / 排序都要重算，手动往 _buffer 插一行容易把顺序搞乱。
+    /// </summary>
+    private async Task CreateFolderAsync()
+    {
+        var client = _client;
+        if (client is null || IsBusy) return;
+        if (NewFolderPrompt is null) return;
+
+        var name = NewFolderPrompt();
+        if (string.IsNullOrWhiteSpace(name)) return;   // 用户取消（空名弹窗里已拦，这里兜底）
+
+        var byteCount = Encoding.UTF8.GetByteCount(name);
+        if (byteCount > MaxNameBytes)
+        {
+            UiDialog.Show($"文件夹名是 {byteCount} 字节，超过 115 的 {MaxNameBytes} 字节上限：\n\n  {name}\n\n请改短一些。",
+                "名称过长", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var cid = CurrentFolderId;
+        var ct = ResetCts();
+        IsBusy = true;
+        StatusText = $"正在新建文件夹「{name}」...";
+
+        string? error = null;
+        try
+        {
+            await client.CreateFolderAsync(cid, name, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            error = "新建文件夹被中断（切换了目录或退出了网盘）";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (error is not null)
+        {
+            StatusText = $"新建文件夹失败：{error}";
+            _log($"[115][FAIL] 新建文件夹「{name}」（cid={cid}）：{error}");
+            UiDialog.Show($"115 网盘新建文件夹失败：\n\n{error}", "115 网盘 · 新建文件夹",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _log($"[115][OK] 已在「{CurrentPathText}」下新建文件夹「{name}」");
+        StatusText = $"已新建文件夹「{name}」";
+        Refresh();   // 重载当前目录，新文件夹按「文件夹置顶 + 排序」落到正确位置
+    }
+
+    /// <summary>
+    /// 拖放移动：把列表里拖动的条目直接移进松手处的目标目录。
+    /// 目标可以是列表里的**文件夹行**（移进它），也可以是首行**「返回上级」伪条目**（移到上一级目录）。
+    /// 与「移动到」按钮同一条接口通道（POST /files/move，一次请求带全部 fid[0..n]），
+    /// 但不弹确认框 —— 拖放本身就是明确的意图，结果用状态行 + 日志反馈；
+    /// 服务端拒绝（如移进自己的子目录）时把原文弹给用户。
+    /// </summary>
+    public async Task MoveByDragAsync(IReadOnlyList<N115ItemViewModel> items, N115ItemViewModel target)
+    {
+        var client = _client;
+        if (client is null || IsBusy) return;
+
+        // 目标解析：真实文件夹行 → 它的 cid；「返回上级」伪条目 → 上一级目录的 cid
+        string targetCid;
+        string targetName;
+        if (target.IsParentEntry)
+        {
+            if (_path.Count < 2) return;   // 根目录没有「上级」可去
+            (targetCid, targetName) = _path[^2];
+        }
+        else
+        {
+            if (!target.IsDirectory) return;   // 文件不能作为目标，只能拖进文件夹
+            targetCid = target.Id;
+            targetName = target.Name;
+        }
+
+        // 混进来的伪条目 / 目标本身去掉（整组选中拖动时目标可能也在选中集合里）
+        var targets = items
+            .Where(x => !x.IsParentEntry && !ReferenceEquals(x, target))
+            .Where(x => !(x.IsDirectory && string.Equals(x.Id, targetCid, StringComparison.Ordinal)))
+            .ToList();
+        if (targets.Count == 0) return;
+
+        var ids = targets.Select(x => x.Id).ToList();
+        var ct = ResetCts();
+        IsBusy = true;
+        StatusText = $"正在移动 {ids.Count} 项到「{targetName}」...";
+
+        string? error = null;
+        try
+        {
+            await client.MoveAsync(ids, targetCid, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            error = "移动被中断（切换了目录或退出了网盘）";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (error is not null)
+        {
+            StatusText = $"移动失败：{error}";
+            _log($"[115][FAIL] 拖放移动 {ids.Count} 项 → 「{targetName}」(cid={targetCid})：{error}");
+            UiDialog.Show($"115 网盘移动失败：\n\n{error}", "115 网盘移动",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        foreach (var item in targets) _buffer.Remove(item);
+        _totalCount = Math.Max(0, _totalCount - targets.Count);
+        RebuildItems();
+        ClearSelection();
+        StatusText = $"已移动 {targets.Count} 项到「{targetName}」";
+        _log($"[115][OK] 拖放移动 {targets.Count} 项 → 「{targetName}」(cid={targetCid})");
+    }
 
     /// <summary>把选中项移动到 / 复制到用户挑好的目录。两种动作的流程完全一致，只差接口与结果处理。</summary>
     private async Task TransferAsync(bool move)

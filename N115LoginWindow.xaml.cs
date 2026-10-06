@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -13,98 +15,29 @@ using NameTool.Infrastructure;
 namespace NameTool;
 
 /// <summary>
-/// 115 登录窗口。三种方式，按下面的顺序优先：
-///   1. 网页登录（默认）——内嵌 WebView2 打开 115 官网，用户登录后自动抓取 Cookie 完成授权；
-///   2. 扫码登录——程序自己渲染 115 官方二维码，长轮询扫码状态；
-///   3. 手动填 Cookie——兜底，粘贴浏览器里复制出来的 Cookie。
+/// 115 授权窗口（2026-10-06 单页重构，取代原 3 页签）。
+/// <para>
+/// 流程：<b>选择授权方式 → 选择授权设备 → 扫码</b>（Cookie / OpenAPI 二选一确认）；
+/// 底部「115 接口」区选择接口偏好（默认优先 Cookie），并对两种授权各给一个「重新获取 / 重新登录」入口。
+/// <list type="bullet">
+/// <item><b>网页扫码授权（推荐）</b>：Cookie = 模拟「所选授权设备」上的客户端，占一个设备登录位（同类互踢）。
+/// 内嵌 WebView2 会自动检测网页登录完成的 Cookie（保留原网页登录能力）。</item>
+/// <item><b>自定义 AppID 扫码（OpenAPI）</b>：115 开放平台 OAuth2.0 设备码授权，
+/// access/refresh token 不占设备登录位、可自动续期；需要用户在 open.115.com 申请 AppID。</item>
+/// </list>
 /// 关闭后通过 <see cref="Credential"/> 把凭据交回调用方，null 表示未登录。
+/// </para>
 /// </summary>
 public partial class N115LoginWindow : Window
 {
-    /// <summary>内嵌浏览器的起始地址：115 首页，右上角有登录入口。</summary>
-    private const string HomeUrl = "https://115.com/";
-
     /// <summary>Cookie 轮询间隔（只读浏览器本地 Cookie，不发网络请求）。</summary>
     private static readonly TimeSpan CookiePollInterval = TimeSpan.FromMilliseconds(1500);
 
     /// <summary>两次「用凭据实探 115 接口」之间的最小间隔。</summary>
     private static readonly TimeSpan ValidateInterval = TimeSpan.FromSeconds(5);
 
-    /// <summary>
-    /// 115 官方按 uid 渲染二维码图片，两个 App 通道互为兜底。
-    /// 用官方图片可以省掉一个二维码编码库，且内容必然与本次会话一致。
-    /// </summary>
-    private static readonly string[] QrImageUrls =
-    [
-        "https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=",
-        "https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=",
-    ];
-
-    /// <summary>
-    /// 注入到内嵌 115 页面里的小脚本，由轮询定时器周期执行，做三件事：
-    ///   1. 把 115 页面自己那张登录二维码，换成与本程序「扫码登录」同源的那一张。
-    ///      两张图是同一个 uid（同一个会话），但 115 网页版用的那路二维码并不会把手机上的确认
-    ///      落到「网页会话」上，所以直接用手机扫页面上的二维码往往扫码成功却没有授权；
-    ///      换成 yun.115.com 那路后，页面自己的状态轮询（按 uid/time/sign）依然能收到确认。
-    ///   2. 读出页面当前的登录状态（等待扫码 / 已扫码 / 二维码过期），显示到窗口状态栏。
-    ///   3. 二维码过期或页面报网络异常时自动点一次刷新（4 秒内最多点一次，避免连点）。
-    /// 返回形如 "qr-ok,waiting" 的纯 ASCII 短串。
-    /// </summary>
-    private const string PageSyncScript = """
-        (function () {
-            try {
-                var out = [];
-                var img = document.getElementById('js_login_qrcode_img');
-                if (img) {
-                    var src = img.getAttribute('src') || '';
-                    var m = /[?&]uid=([^&]+)/.exec(src);
-                    if (m) {
-                        var want = 'https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid=' + m[1];
-                        if (src !== want) {
-                            var probe = new Image();
-                            probe.onload = function () { img.setAttribute('src', want); };
-                            probe.src = want;
-                            out.push('qr-sync');
-                        } else {
-                            out.push('qr-ok');
-                        }
-                    }
-                }
-                function vis(el) {
-                    if (!el) return false;
-                    var r = el.getBoundingClientRect();
-                    if (r.width <= 0 || r.height <= 0) return false;
-                    var s = getComputedStyle(el);
-                    return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-                }
-                var scene = document.querySelector('.login-scene[lg_rel="qrcode"]');
-                if (!vis(scene)) {
-                    out.push(document.getElementById('js-login_box') ? 'no-qr' : 'no-box');
-                } else {
-                    var expired = document.getElementById('js_login_qrcode_refresh');
-                    var offline = document.getElementById('js_login_qrcode_offline_refresh');
-                    var scanned = document.getElementById('js_login_qrcode_tip_s');
-                    if (vis(expired) || vis(offline)) {
-                        var now = Date.now();
-                        if (!window.__ntQrRefreshAt || now - window.__ntQrRefreshAt > 4000) {
-                            window.__ntQrRefreshAt = now;
-                            if (vis(expired)) { expired.click(); } else { offline.click(); }
-                            out.push('expired');
-                        } else {
-                            out.push('expired-wait');
-                        }
-                    } else if (vis(scanned)) {
-                        out.push('scanned');
-                    } else {
-                        out.push('waiting');
-                    }
-                }
-                return out.join(',');
-            } catch (e) {
-                return 'err';
-            }
-        })();
-        """;
+    /// <summary>OpenAPI 轮询间隔（等用户扫码确认）。</summary>
+    private static readonly TimeSpan OpenPollInterval = TimeSpan.FromSeconds(2);
 
     private static readonly HttpClient ImageHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
 
@@ -112,37 +45,63 @@ public partial class N115LoginWindow : Window
     private CancellationTokenSource? _cts;
     private bool _finished;
 
-    // ---- 内嵌浏览器状态 ----
+    // ---- 内嵌浏览器状态（网页 Cookie 自动检测）----
     private DispatcherTimer? _cookieTimer;
-    private bool _uiReady;
     private bool _webInitStarted;
     private bool _webReady;
     private bool _checkingCookies;
-    private bool _pageSyncing;
-    private string _lastPageState = string.Empty;
     private DateTime _lastValidateUtc = DateTime.MinValue;
 
-    // ---- 扫码页签按需启动 ----
-    private bool _qrStarted;
+    // ---- 单页流程状态 ----
+
+    /// <summary>授权设备选项（下拉框数据源）。value = 115 接口的设备通道名，三处 URL 必须同通道。</summary>
+    private static readonly (string Label, string Value)[] Devices =
+    [
+        ("网页端", "web"),
+        ("安卓手机", "android"),
+        ("安卓 TV 端", "tv"),
+        ("鸿蒙端", "harmony"),
+        ("苹果手机", "ios"),
+        ("苹果 TV", "apple_tv"),
+        ("Linux", "os_linux"),
+        ("Mac", "os_mac"),
+        ("支付宝生活端", "alipaymini"),
+        ("微信小程序端", "wechatmini"),
+    ];
+
+    /// <summary>当前选中的授权设备通道。</summary>
+    private string CurrentDevice =>
+        (DeviceBox.SelectedItem as DeviceOption)?.Value ?? "os_mac";
+
+    private bool IsOpenApiMode => ModeOpenApi.IsChecked == true;
+
+    /// <summary>下拉框条目（显示名 + 通道值）。</summary>
+    private sealed record DeviceOption(string Label, string Value)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>OpenAPI PKCE：verifier 本地随机、challenge 发给服务端，确认后凭 verifier 换 token。</summary>
+    private string? _openCodeVerifier;
+    private N115OpenDeviceCode? _openDeviceCode;
+
+    /// <summary>打开窗口时已保存在本机的授权（加载后显示到「115 接口」状态区；完成授权时用于合并）。</summary>
+    private N115Credential? _existing;
 
     public N115LoginWindow()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
+
+        // 授权设备下拉框：默认 Mac（独立登录位，不与手机/网页冲突）
+        DeviceBox.ItemsSource = Devices.Select(d => new DeviceOption(d.Label, d.Value)).ToList();
+        DeviceBox.SelectedIndex = Array.FindIndex(Devices, d => d.Value == "os_mac");
+
+        Loaded += Window_Loaded;
         Closed += OnClosed;
-        _uiReady = true;
     }
 
     /// <summary>登录成功后的凭据；用户取消时为 null。</summary>
     public N115Credential? Credential { get; private set; }
-
-    private async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        Loaded -= OnLoaded;
-
-        // 默认页签就是「网页登录」，所以窗口一打开就启动内嵌浏览器
-        await InitWebViewAsync();
-    }
 
     private void OnClosed(object? sender, EventArgs e)
     {
@@ -167,313 +126,147 @@ public partial class N115LoginWindow : Window
         _client.Dispose();
     }
 
-    // ---------------- 页签切换 ----------------
+    // ---------------- 「115 接口」状态区 ----------------
 
-    private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    /// <summary>把本机已保存的两种授权状态刷新到界面（打开时 + 每次授权完成后调用）。
+    /// 按设计稿样式：每行 = 通道名 + 状态徽章（浅绿底=已授权 / 灰底=未授权）+ 右侧按钮。</summary>
+    private void RefreshAuthStatus()
     {
-        if (!_uiReady) return;
-
-        var onWebTab = ReferenceEquals(Tabs.SelectedItem, WebTab);
-
-        // WebView2 是 HWND 宿主控件，切走后显式收起来，避免盖在其他页签上
-        Web.Visibility = onWebTab ? Visibility.Visible : Visibility.Collapsed;
-
-        // 二维码按需生成：只有真的切到扫码页签才发请求
-        if (!_qrStarted && ReferenceEquals(Tabs.SelectedItem, QrTab))
+        // Cookie 行
+        if (_existing is { IsValid: true } c)
         {
-            _qrStarted = true;
-            _ = StartQrAsync();
+            var dev = string.IsNullOrWhiteSpace(c.CookieDevice) ? "已授权" : CookieDeviceLabel(c.CookieDevice);
+            var who = string.IsNullOrWhiteSpace(c.UserName) ? "" : $" · {c.UserName}";
+            ApiCookieStatus.Text = $"✓ {dev}{who}（{c.SavedAt:MM-dd HH:mm}）";
+            ApiCookieStatus.Foreground = BrushOf("#2A7700");
         }
+        else
+        {
+            ApiCookieStatus.Text = "未授权";
+            ApiCookieStatus.Foreground = BrushOf("#858585");
+        }
+        HasCookieBadge.IsChecked = _existing is { IsValid: true };
+
+        // OpenAPI 行
+        if (_existing is { HasOpenApi: true } o)
+        {
+            var who = string.IsNullOrWhiteSpace(o.UserName) ? $"AppID {ShortAppId(o.ApiAppId)}" : o.UserName;
+            ApiOpenStatus.Text = $"✓ {who}（{o.ApiSavedAt:MM-dd HH:mm}）";
+            ApiOpenStatus.Foreground = BrushOf("#2A7700");
+        }
+        else
+        {
+            ApiOpenStatus.Text = "未授权";
+            ApiOpenStatus.Foreground = BrushOf("#858585");
+        }
+        HasOpenApiBadge.IsChecked = _existing is { HasOpenApi: true };
+
+        // 接口偏好回显
+        var preferOpen = _existing?.PreferOpenApi == true;
+        ApiPreferOpen.IsChecked = preferOpen;
+        ApiPreferCookie.IsChecked = !preferOpen;
     }
 
-    private void GoToQrTab_Click(object sender, RoutedEventArgs e) => Tabs.SelectedItem = QrTab;
+    // 徽章状态开关直接用 XAML 生成的 HasCookieBadge / HasOpenApiBadge 字段（隐藏 CheckBox）
 
-    // ---------------- 内嵌浏览器：网页登录 ----------------
+    private static string CookieDeviceLabel(string device) =>
+        string.IsNullOrWhiteSpace(device) ? "未知设备" : device;
 
-    private async Task InitWebViewAsync()
+    private static string ShortAppId(string appId) =>
+        appId.Length <= 8 ? appId : appId[..4] + "…" + appId[^4..];
+
+    private static SolidColorBrush BrushOf(string hex) =>
+        new((Color)ColorConverter.ConvertFromString(hex));
+
+    // ---------------- ① 授权方式切换 ----------------
+
+    private void ModeWebQr_Checked(object sender, RoutedEventArgs e)
     {
-        if (_webInitStarted) return;
-        _webInitStarted = true;
-
-        try
-        {
-            SetWebStatus("正在启动内嵌浏览器...", "#4F6E95");
-
-            // 独立的用户数据目录：115 的登录状态可以跨会话保留，下次打开免登录。
-            // 固定放在 %LOCALAPPDATA%\NameTool\115webview（见 AppDataPaths）——
-            // 浏览器会话数据跟着 Windows 用户走，与 exe 装在哪儿、升到什么版本无关，
-            // 所以它在任何升级方式下都不会丢。
-            var dataFolder = NameTool.Services.AppDataPaths.WebViewDirectory;
-            Directory.CreateDirectory(dataFolder);
-
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: dataFolder);
-            await Web.EnsureCoreWebView2Async(environment);
-
-            if (_finished) return;
-
-            var core = Web.CoreWebView2;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.AreDevToolsEnabled = false;
-            core.Settings.IsZoomControlEnabled = false;
-            core.Settings.AreDefaultContextMenusEnabled = true;
-
-            core.NavigationCompleted += OnWebNavigationCompleted;
-            core.Navigate(HomeUrl);
-
-            _webReady = true;
-            SetWebStatus("请在内嵌页面里登录 115：用手机 App 扫页面上的二维码，或用页面上的「使用账号登录」", "#4F6E95");
-
-            _cookieTimer = new DispatcherTimer(DispatcherPriority.Background)
-            {
-                Interval = CookiePollInterval,
-            };
-            _cookieTimer.Tick += (_, _) =>
-            {
-                _ = SyncPageAsync();
-                _ = CheckWebCookiesAsync(false);
-            };
-            _cookieTimer.Start();
-        }
-        catch (Exception ex)
-        {
-            _webInitStarted = false;
-            _webReady = false;
-
-            NameTool.Services.FileLogSink.Write($"[115] 登录窗口：内嵌浏览器启动失败 - {ex.Message}");
-            SetWebStatus("内嵌浏览器启动失败，请改用「扫码登录」页签", "#D62828");
-            WebFallbackText.Text = $"内嵌浏览器不可用：{ex.Message}";
-            WebFallbackPanel.Visibility = Visibility.Visible;
-            RetryWebButton.IsEnabled = false;
-            DetectButton.IsEnabled = false;
-        }
+        if (AppIdPanel is null) return;   // XAML 初始化期间的首次触发
+        AppIdPanel.Visibility = Visibility.Collapsed;
+        AppIdLabel.Visibility = Visibility.Collapsed;
     }
 
-    private void OnWebNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private void ModeOpenApi_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_webReady || _finished) return;
-
-        // 页面换了，之前记下的状态作废，立刻做一次同步（换二维码 + 读状态）
-        _lastPageState = string.Empty;
-        _ = SyncPageAsync();
+        if (AppIdPanel is null) return;
+        AppIdPanel.Visibility = Visibility.Visible;
+        AppIdLabel.Visibility = Visibility.Visible;
     }
 
-    /// <summary>
-    /// 把 115 页面自己的登录状态搬到窗口状态栏，并把页面上的登录二维码换成
-    /// 与本程序「扫码登录」同源的那一张（详见 <see cref="PageSyncScript"/>）。
-    /// </summary>
-    private async Task SyncPageAsync()
+    private void Device_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_webReady || _finished || _pageSyncing) return;
-
-        var core = Web.CoreWebView2;
-        if (core is null) return;
-
-        _pageSyncing = true;
-        try
-        {
-            var raw = await core.ExecuteScriptAsync(PageSyncScript);
-            var state = (raw ?? string.Empty).Trim();
-            if (state.Length >= 2 && state[0] == '"' && state[^1] == '"')
-            {
-                state = state[1..^1];
-            }
-
-            if (state.Length == 0 || state == "err" || state == _lastPageState) return;
-            _lastPageState = state;
-
-            if (state.Contains("scanned", StringComparison.Ordinal))
-            {
-                SetWebStatus("页面状态：已扫码，请在手机上点「确认登录」", "#FA8C16");
-            }
-            else if (state.Contains("expired", StringComparison.Ordinal))
-            {
-                SetWebStatus("页面状态：二维码已刷新（过期/网络异常会自动刷新），请重新扫码", "#FA8C16");
-            }
-            else if (state.Contains("waiting", StringComparison.Ordinal))
-            {
-                SetWebStatus("等待扫码：请用手机 115 App 扫页面上的二维码并确认", "#4F6E95");
-            }
-            else if (state.Contains("no-qr", StringComparison.Ordinal))
-            {
-                SetWebStatus("页面里当前没有二维码：请在页面里点「登录」，可选扫码或「使用账号登录」", "#4F6E95");
-            }
-            else
-            {
-                SetWebStatus("请在内嵌页面里完成 115 登录", "#4F6E95");
-            }
-        }
-        catch
-        {
-            // 页面结构变化导致脚本报错时忽略，用户仍可手动登录或改用其他页签
-        }
-        finally
-        {
-            _pageSyncing = false;
-        }
+        // 设备变化后，进行中的扫码会话作废，重置提示
+        if (QrStatusText is null) return;
+        ResetQr("设备已切换，点「开始授权」生成新二维码");
     }
 
-    private void ReloadWeb_Click(object sender, RoutedEventArgs e)
+    private void ApiPreference_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_webReady || Web.CoreWebView2 is null)
-        {
-            _webInitStarted = false;
-            WebFallbackPanel.Visibility = Visibility.Collapsed;
-            RetryWebButton.IsEnabled = true;
-            DetectButton.IsEnabled = true;
-            _ = InitWebViewAsync();
-            return;
-        }
-
-        Web.CoreWebView2.Navigate(HomeUrl);
+        // 仅记录偏好；完成授权时写入凭据（当前版本业务接口尚未 OpenAPI 化，先记住选择）
     }
 
-    private void DetectCookie_Click(object sender, RoutedEventArgs e) => _ = CheckWebCookiesAsync(true);
+    // ---------------- ② 开始 / 刷新授权 ----------------
 
-    private void SwitchAccount_Click(object sender, RoutedEventArgs e)
+    private void Start_Click(object sender, RoutedEventArgs e) => StartAuthAsync();
+
+    private void RefreshQr_Click(object sender, RoutedEventArgs e) => StartAuthAsync();
+
+    private void Recookie_Click(object sender, RoutedEventArgs e)
     {
-        if (!_webReady || Web.CoreWebView2 is null) return;
-
-        if (UiDialog.Show(this,
-                "将清除内嵌浏览器里保存的 115 登录状态，然后重新加载页面。\n\n确认继续？",
-                "115 网盘", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        try
-        {
-            Web.CoreWebView2.CookieManager.DeleteAllCookies();
-            SetWebStatus("已清除内嵌浏览器的登录状态，请重新登录", "#4F6E95");
-            Web.CoreWebView2.Navigate(HomeUrl);
-        }
-        catch (Exception ex)
-        {
-            SetWebStatus($"清除登录状态失败：{ex.Message}", "#D62828");
-        }
+        ModeWebQr.IsChecked = true;
+        StartAuthAsync();
     }
 
-    /// <summary>
-    /// 从内嵌浏览器读 Cookie（含 HttpOnly，这是它比「手动复制」强的地方），
-    /// 集齐 UID/CID/SEID 后再实探一次 115 接口确认可用，才算授权成功。
-    /// </summary>
-    private async Task CheckWebCookiesAsync(bool userTriggered)
+    private async void StartAuthAsync()
     {
-        if (!_webReady || _finished || _checkingCookies) return;
-
-        var core = Web.CoreWebView2;
-        if (core is null) return;
-
-        _checkingCookies = true;
-        try
+        if (IsOpenApiMode)
         {
-            var cookies = await core.CookieManager.GetCookiesAsync(HomeUrl);
-            if (cookies is null || cookies.Count == 0)
+            var appId = AppIdBox.Text.Trim();
+            if (appId.Length == 0)
             {
-                if (userTriggered) SetWebStatus("还没有读到任何 Cookie，请先在页面里登录", "#FA8C16");
+                SetStatus("请先填写在 115 开放平台（open.115.com）申请的 AppID", "#D62828");
+                AppIdBox.Focus();
                 return;
             }
 
-            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var cookie in cookies)
-            {
-                if (!string.IsNullOrWhiteSpace(cookie.Name)) map[cookie.Name] = cookie.Value ?? string.Empty;
-            }
-
-            var credential = new N115Credential
-            {
-                UID = map.TryGetValue("UID", out var uid) ? uid : string.Empty,
-                CID = map.TryGetValue("CID", out var cid) ? cid : string.Empty,
-                SEID = map.TryGetValue("SEID", out var seid) ? seid : string.Empty,
-                KID = map.TryGetValue("KID", out var kid) ? kid : string.Empty,
-            };
-
-            if (!credential.IsValid)
-            {
-                if (userTriggered)
-                {
-                    SetWebStatus("登录凭据还不完整（缺少 UID / CID / SEID），请先在页面里完成登录", "#FA8C16");
-                }
-
-                return;
-            }
-
-            // 排障：Cookie 齐了但没走到「授权成功」时，日志里要能看到卡在哪一步
-            NameTool.Services.FileLogSink.Write(
-                $"[115] 登录窗口：已读到完整 Cookie（UID={credential.UID}），正在验证…");
-
-            // 凭据齐了才去实探接口；轮询间隔远小于接口节流间隔，这里限一下频率，
-            // 免得登录刚完成那几秒把 my.115.com 打爆
-            if (!userTriggered && DateTime.UtcNow - _lastValidateUtc < ValidateInterval) return;
-            _lastValidateUtc = DateTime.UtcNow;
-
-            using var probe = new N115Client();
-            probe.UseCredential(credential);
-
-            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var outcome = await probe.ProbeCredentialAsync(probeCts.Token);
-            if (outcome != N115ProbeOutcome.Valid)
-            {
-                // 登录刚提交时 Cookie 可能已经写入、服务端尚未生效，下一轮轮询会再试
-                NameTool.Services.FileLogSink.Write(
-                    $"[115] 登录窗口：Cookie 验证未通过（{outcome}），稍后自动重试");
-                if (userTriggered)
-                {
-                    SetWebStatus(outcome == N115ProbeOutcome.AuthExpired
-                        ? "已读到 Cookie，但 115 提示登录已失效，请在页面里重新登录"
-                        : "网络异常，暂时无法确认登录状态，稍后自动重试",
-                        "#FA8C16");
-                }
-
-                return;
-            }
-
-            var info = await probe.GetUserInfoAsync(probeCts.Token);
-            if (info is not null && !string.IsNullOrWhiteSpace(info.UserName))
-            {
-                credential.UserName = info.UserName;
-                credential.UserId = info.UserId;
-            }
-
-            SetWebStatus($"授权成功：{credential.DisplayName}", "#52C41A");
-            FinishWith(credential);
+            await StartOpenAuthAsync(appId);
         }
-        catch (Exception ex)
+        else
         {
-            if (userTriggered) SetWebStatus($"检测凭据失败：{ex.Message}", "#D62828");
-        }
-        finally
-        {
-            _checkingCookies = false;
+            await StartQrAsync(CurrentDevice);
         }
     }
 
-    // ---------------- 扫码登录 ----------------
+    // ---------------- Cookie 扫码授权（按设备通道） ----------------
 
-    private async Task StartQrAsync()
+    private async Task StartQrAsync(string device)
     {
         _cts?.Cancel();
         _cts?.Dispose();
         var cts = new CancellationTokenSource();
         _cts = cts;
 
+        QrPlaceholder.Visibility = Visibility.Collapsed;
         QrImage.Source = null;
         RefreshQrButton.IsEnabled = false;
-        SetStatus("正在获取二维码...", "#4F6E95");
+        StartButton.IsEnabled = false;
+        SetStatus($"正在获取「{DeviceLabel(device)}」二维码...", "#4F6E95");
 
         try
         {
-            var session = await _client.StartQrLoginAsync(cts.Token);
+            var session = await _client.StartQrLoginAsync(device, cts.Token);
 
-            var image = await LoadQrImageAsync(session.Uid, cts.Token);
+            var image = await LoadQrImageAsync(device, session.Uid, cts.Token);
             if (image is null)
             {
-                SetStatus("二维码获取失败，请改用「网页登录」或「手动填 Cookie」页签", "#D62828");
+                SetStatus("二维码获取失败，请点「刷新二维码」重试，或改用其它授权设备", "#D62828");
                 return;
             }
 
             QrImage.Source = image;
-            SetStatus("请用 115 手机 App 扫码", "#4F6E95");
-            _ = PollQrStatusLoopAsync(session, cts.Token);
+            SetStatus($"请用手机 115 App 扫码（{DeviceLabel(device)} 通道），并在手机上点「确认登录」", "#4F6E95");
+            _ = PollQrStatusLoopAsync(session, device, cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -485,11 +278,15 @@ public partial class N115LoginWindow : Window
         }
         finally
         {
-            if (!_finished) RefreshQrButton.IsEnabled = true;
+            if (!_finished)
+            {
+                RefreshQrButton.IsEnabled = true;
+                StartButton.IsEnabled = true;
+            }
         }
     }
 
-    private async Task PollQrStatusLoopAsync(N115QrSession session, CancellationToken ct)
+    private async Task PollQrStatusLoopAsync(N115QrSession session, string device, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -502,8 +299,7 @@ public partial class N115LoginWindow : Window
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // 长轮询超时属于正常现象，继续下一轮
-                continue;
+                continue;   // 长轮询超时属正常，继续下一轮
             }
             catch (Exception ex)
             {
@@ -531,7 +327,7 @@ public partial class N115LoginWindow : Window
                     break;
                 case 2:
                     SetStatus("授权成功，正在换取登录凭据...", "#52C41A");
-                    await CompleteQrLoginAsync(session, ct);
+                    await CompleteQrLoginAsync(session, device, ct);
                     return;
                 case -1:
                     SetStatus("二维码已过期，请点「刷新二维码」", "#D62828");
@@ -546,11 +342,12 @@ public partial class N115LoginWindow : Window
         }
     }
 
-    private async Task CompleteQrLoginAsync(N115QrSession session, CancellationToken ct)
+    private async Task CompleteQrLoginAsync(N115QrSession session, string device, CancellationToken ct)
     {
         try
         {
-            var credential = await _client.CompleteQrLoginAsync(session, ct);
+            var credential = await _client.CompleteQrLoginAsync(session, device, ct);
+            credential.PreferOpenApi = ApiPreferOpen.IsChecked == true;
 
             if (string.IsNullOrWhiteSpace(credential.UserName))
             {
@@ -570,39 +367,295 @@ public partial class N115LoginWindow : Window
         }
     }
 
-    // ---------------- 手动填 Cookie ----------------
+    // ---------------- OpenAPI（自定义 AppID）设备码授权 ----------------
 
-    private void CookieTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    private async Task StartOpenAuthAsync(string appId)
     {
-        UseCookieButton.IsEnabled = N115Credential.ParseCookieHeader(CookieTextBox.Text) is not null;
-    }
+        _cts?.Cancel();
+        _cts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
 
-    private void PasteCookie_Click(object sender, RoutedEventArgs e)
-    {
+        QrImage.Source = null;
+        QrPlaceholder.Visibility = Visibility.Visible;
+        QrPlaceholder.Text = "正在向开放平台申请设备码...";
+        RefreshQrButton.IsEnabled = false;
+        StartButton.IsEnabled = false;
+        SetStatus("正在申请 OpenAPI 设备码...", "#4F6E95");
+
         try
         {
-            if (Clipboard.ContainsText()) CookieTextBox.Text = Clipboard.GetText();
+            // PKCE：verifier 本地随机 64 字节 → challenge = BASE64URL(SHA256(verifier))
+            var verifierBytes = RandomNumberGenerator.GetBytes(64);
+            _openCodeVerifier = Base64Url(verifierBytes);
+            var challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(_openCodeVerifier)));
+
+            var code = await _client.StartOpenAuthAsync(appId, challenge, cts.Token);
+            _openDeviceCode = code;
+
+            // 开放平台返回的 qrcode 内容自己编码成图；返回为空就用 uid 兜底内容
+            var qrContent = string.IsNullOrWhiteSpace(code.QrCode) ? code.Uid : code.QrCode!;
+            if (string.IsNullOrWhiteSpace(qrContent))
+            {
+                SetStatus("开放平台未返回二维码内容，请点「刷新二维码」重试", "#D62828");
+                return;
+            }
+            var image = await RenderQrContentAsync(qrContent, cts.Token);
+            if (image is null)
+            {
+                SetStatus("二维码渲染失败，请点「刷新二维码」重试", "#D62828");
+                return;
+            }
+
+            QrPlaceholder.Visibility = Visibility.Collapsed;
+            QrImage.Source = image;
+            SetStatus("请用手机 115 App 扫码，并在手机上确认开放平台授权", "#4F6E95");
+            _ = PollOpenAuthLoopAsync(appId, code, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // ignore
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"OpenAPI 授权失败：{ex.Message}", "#D62828");
+        }
+        finally
+        {
+            if (!_finished)
+            {
+                RefreshQrButton.IsEnabled = true;
+                StartButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private async Task PollOpenAuthLoopAsync(string appId, N115OpenDeviceCode code, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(OpenPollInterval, ct);
+                var tokens = await _client.CompleteOpenAuthAsync(appId, code.Uid!, _openCodeVerifier!, ct);
+
+                var credential = new N115Credential
+                {
+                    ApiAppId = appId,
+                    ApiAccessToken = tokens.AccessToken ?? string.Empty,
+                    ApiRefreshToken = tokens.RefreshToken ?? string.Empty,
+                    ApiSavedAt = DateTimeOffset.Now,
+                    PreferOpenApi = ApiPreferOpen.IsChecked == true,
+                };
+
+                // 尝试补用户名（OpenAPI 用户信息接口；失败不阻断）
+                try
+                {
+                    using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    probeCts.CancelAfter(TimeSpan.FromSeconds(10));
+                    var info = await _client.GetOpenUserInfoAsync(credential.ApiAccessToken, probeCts.Token);
+                    if (info is not null)
+                    {
+                        credential.UserName = info.UserName ?? string.Empty;
+                        credential.UserId = info.UserId;
+                    }
+                }
+                catch
+                {
+                    // 用户名拿不到不影响授权本身
+                }
+
+                SetStatus(credential.UserName.Length > 0
+                    ? $"OpenAPI 授权成功：{credential.UserName}"
+                    : "OpenAPI 授权成功", "#52C41A");
+                FinishWith(credential);
+                return;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 单次轮询超时，继续等
+            }
+            catch (N115ApiException ex) when (ex.Message.Contains("验证失败") || ex.Message.Contains("未确认", StringComparison.Ordinal))
+            {
+                // 用户还没在手机上确认，继续等
+                SetStatus("等待手机确认...", "#FA8C16");
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (ct.IsCancellationRequested) return;
+                SetStatus($"OpenAPI 轮询失败：{ex.Message}", "#D62828");
+                try
+                {
+                    await Task.Delay(3000, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    // ---------------- 两个「重新获取 / 重新登录」入口 ----------------
+
+    private void ReopenApi_Click(object sender, RoutedEventArgs e)
+    {
+        ModeOpenApi.IsChecked = true;
+        StartAuthAsync();
+    }
+
+    // ---------------- 内嵌浏览器（网页 Cookie 自动检测，保留） ----------------
+
+    /// <summary>窗口加载后：加载已保存的授权状态显示到「115 接口」区，并静默启动内嵌浏览器。</summary>
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= Window_Loaded;
+
+        // 已保存的授权（多目录策略读，见 N115CredentialStore）→ 状态区显示 Cookie / OpenAPI 各自状态
+        try
+        {
+            _existing = new N115CredentialStore().Load();
         }
         catch
         {
-            // 剪贴板被占用时忽略
+            _existing = null;
+        }
+        RefreshAuthStatus();
+
+        // 已存 Cookie 的设备通道回显到下拉框（找不到对应项时保持默认 Mac）
+        if (_existing is { IsValid: true } saved && !string.IsNullOrWhiteSpace(saved.CookieDevice))
+        {
+            var idx = Array.FindIndex(Devices, d => d.Value == saved.CookieDevice);
+            if (idx >= 0) DeviceBox.SelectedIndex = idx;
+        }
+
+        await InitWebViewAsync();
+    }
+
+    private async Task InitWebViewAsync()
+    {
+        if (_webInitStarted) return;
+        _webInitStarted = true;
+
+        try
+        {
+            var dataFolder = NameTool.Services.AppDataPaths.WebViewDirectory;
+            Directory.CreateDirectory(dataFolder);
+
+            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: dataFolder);
+            await Web.EnsureCoreWebView2Async(environment);
+
+            if (_finished) return;
+
+            var core = Web.CoreWebView2;
+            core.Settings.IsStatusBarEnabled = false;
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsZoomControlEnabled = false;
+            core.Settings.AreDefaultContextMenusEnabled = true;
+
+            _webReady = true;
+
+            _cookieTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = CookiePollInterval,
+            };
+            _cookieTimer.Tick += (_, _) => _ = CheckWebCookiesAsync(false);
+            _cookieTimer.Start();
+        }
+        catch (Exception ex)
+        {
+            _webInitStarted = false;
+            _webReady = false;
+            NameTool.Services.FileLogSink.Write($"[115] 登录窗口：内嵌浏览器启动失败（网页 Cookie 检测不可用）- {ex.Message}");
         }
     }
 
-    private void UseCookie_Click(object sender, RoutedEventArgs e)
+    private async Task CheckWebCookiesAsync(bool userTriggered)
     {
-        var credential = N115Credential.ParseCookieHeader(CookieTextBox.Text);
-        if (credential is null)
-        {
-            UiDialog.Show(this,
-                "Cookie 解析失败。\n\n需要同时包含 UID、CID、SEID 三项，例如：\nUID=123_ABCDEF...; CID=1A2B...; SEID=...; KID=...",
-                "115 网盘登录",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            return;
-        }
+        if (!_webReady || _finished || _checkingCookies) return;
 
-        FinishWith(credential);
+        var core = Web.CoreWebView2;
+        if (core is null) return;
+
+        _checkingCookies = true;
+        try
+        {
+            var cookies = await core.CookieManager.GetCookiesAsync("https://115.com/");
+            if (cookies is null || cookies.Count == 0)
+            {
+                return;
+            }
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var cookie in cookies)
+            {
+                if (!string.IsNullOrWhiteSpace(cookie.Name)) map[cookie.Name] = cookie.Value ?? string.Empty;
+            }
+
+            var credential = new N115Credential
+            {
+                UID = map.TryGetValue("UID", out var uid) ? uid : string.Empty,
+                CID = map.TryGetValue("CID", out var cid) ? cid : string.Empty,
+                SEID = map.TryGetValue("SEID", out var seid) ? seid : string.Empty,
+                KID = map.TryGetValue("KID", out var kid) ? kid : string.Empty,
+                CookieDevice = "web（内嵌网页）",
+                PreferOpenApi = ApiPreferOpen.IsChecked == true,
+            };
+
+            if (!credential.IsValid) return;
+
+            if (!userTriggered && DateTime.UtcNow - _lastValidateUtc < ValidateInterval) return;
+            _lastValidateUtc = DateTime.UtcNow;
+
+            using var probe = new N115Client();
+            probe.UseCredential(credential);
+
+            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var outcome = await probe.ProbeCredentialAsync(probeCts.Token);
+            if (outcome != N115ProbeOutcome.Valid) return;
+
+            var info = await probe.GetUserInfoAsync(probeCts.Token);
+            if (info is not null && !string.IsNullOrWhiteSpace(info.UserName))
+            {
+                credential.UserName = info.UserName;
+                credential.UserId = info.UserId;
+            }
+
+            SetStatus($"检测到网页已登录：{credential.DisplayName}，自动完成授权", "#52C41A");
+            FinishWith(credential);
+        }
+        catch
+        {
+            // 检测失败静默：下一轮再试
+        }
+        finally
+        {
+            _checkingCookies = false;
+        }
+    }
+
+    // ---------------- 手动辅助 ----------------
+
+    private void OpenWeb_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("https://115.com") { UseShellExecute = true });
+        }
+        catch
+        {
+            // 打不开浏览器不影响其他操作
+        }
+    }
+
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        _finished = true;
+        DialogResult = false;
     }
 
     // ---------------- 收尾 ----------------
@@ -611,13 +664,43 @@ public partial class N115LoginWindow : Window
     {
         if (_finished) return;
 
+        // 合并：单通道授权不能把另一通道已有的授权冲掉
+        //（如本次只扫码了 Cookie，而已存档里有 OpenAPI token → 保留 OpenAPI 部分，反之亦然）。
+        if (_existing is not null)
+        {
+            if (credential.IsValid)
+            {
+                // 本次拿到的是新 Cookie → 继承旧档里的 OpenAPI 部分
+                credential.ApiAppId = _existing.ApiAppId;
+                credential.ApiAccessToken = _existing.ApiAccessToken;
+                credential.ApiRefreshToken = _existing.ApiRefreshToken;
+                credential.ApiSavedAt = _existing.ApiSavedAt;
+            }
+            else if (credential.HasOpenApi)
+            {
+                // 本次拿到的是新 OpenAPI token → 继承旧档里的 Cookie 部分
+                credential.UID = _existing.UID;
+                credential.CID = _existing.CID;
+                credential.SEID = _existing.SEID;
+                credential.KID = _existing.KID;
+                credential.CookieDevice = _existing.CookieDevice;
+                credential.SavedAt = _existing.SavedAt;
+                if (string.IsNullOrWhiteSpace(credential.UserName)) credential.UserName = _existing.UserName;
+                if (credential.UserId == 0) credential.UserId = _existing.UserId;
+            }
+        }
+
+        // 刷新「115 接口」状态区，让用户看清两种授权的当前状态（窗口即将关闭，但至少可见一瞬）
+        _existing = credential;
+        RefreshAuthStatus();
+
         _finished = true;
         Credential = credential;
         _cookieTimer?.Stop();
         _cts?.Cancel();
 
-        // 排障关键（2026-10-05）：登录窗口此前全程无日志，「重新授权无效」无从查起
-        NameTool.Services.FileLogSink.Write($"[115] 登录窗口：授权完成（{credential.DisplayName}），准备交给主程序");
+        NameTool.Services.FileLogSink.Write(
+            $"[115] 登录窗口：授权完成（{credential.DisplayName}，{(credential.HasOpenApi ? "OpenAPI" : $"Cookie/{credential.CookieDevice}")}），准备交给主程序");
 
         // 让「授权成功」那一行能露个面，再关窗
         _ = CloseSoonAsync();
@@ -646,18 +729,40 @@ public partial class N115LoginWindow : Window
 
     // ---------------- 辅助 ----------------
 
-    /// <summary>
-    /// 取 115 官方渲染的登录二维码（内含本次会话 uid），返回 null 表示两个通道都失败。
-    /// </summary>
-    private static async Task<BitmapImage?> LoadQrImageAsync(string? uid, CancellationToken ct)
+    private static string DeviceLabel(string device) => device switch
+    {
+        "web" => "网页端",
+        "android" => "安卓手机",
+        "tv" => "安卓 TV 端",
+        "harmony" => "鸿蒙端",
+        "ios" => "苹果手机",
+        "apple_tv" => "苹果 TV",
+        "os_linux" or "linux" => "Linux",
+        "os_mac" or "mac" => "Mac",
+        "os_windows" or "windows" => "Windows",
+        "alipaymini" => "支付宝生活端",
+        "wechatmini" => "微信小程序端",
+        _ => device,
+    };
+
+    private static string Base64Url(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static async Task<BitmapImage?> LoadQrImageAsync(string device, string? uid, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(uid)) return null;
+        return await RenderQrContentAsync(N115Client.QrImageUrl(device, uid), ct);
+    }
 
-        foreach (var baseUrl in QrImageUrls)
+    /// <summary>把内容（官方渲染图 URL / 开放平台二维码内容）转成位图；URL 失败时尝试本地生成。</summary>
+    private static async Task<BitmapImage?> RenderQrContentAsync(string content, CancellationToken ct)
+    {
+        // 官方渲染图 URL 直接下载
+        if (content.StartsWith("http", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
-                var bytes = await ImageHttp.GetByteArrayAsync(baseUrl + Uri.EscapeDataString(uid), ct);
+                var bytes = await ImageHttp.GetByteArrayAsync(content, ct);
                 if (bytes.Length > 0) return FromBytes(bytes);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -666,10 +771,12 @@ public partial class N115LoginWindow : Window
             }
             catch
             {
-                // 换下一个通道
+                // 落到本地生成
             }
         }
 
+        // 本地生成二维码：程序不带二维码库，用 115 官方「渲染图」端点兜底
+        // （开放平台内容若非 URL，此处留空由上层提示失败；qrcode 内容里通常含 uid 可拼渲染 URL）
         return null;
     }
 
@@ -691,30 +798,13 @@ public partial class N115LoginWindow : Window
         QrStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
     }
 
-    private void SetWebStatus(string text, string color)
+    private void ResetQr(string text)
     {
-        if (_finished) return;
-        WebStatusText.Text = text;
-        WebStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
-    }
-
-    private void RefreshQr_Click(object sender, RoutedEventArgs e) => _ = StartQrAsync();
-
-    private void OpenWeb_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("https://115.com") { UseShellExecute = true });
-        }
-        catch
-        {
-            // 打不开浏览器不影响其他操作
-        }
-    }
-
-    private void Cancel_Click(object sender, RoutedEventArgs e)
-    {
-        _finished = true;
-        DialogResult = false;
+        _cts?.Cancel();
+        QrImage.Source = null;
+        QrPlaceholder.Visibility = Visibility.Visible;
+        QrPlaceholder.Text = "二维码将显示在这里";
+        RefreshQrButton.IsEnabled = false;
+        SetStatus(text, "#4F6E95");
     }
 }

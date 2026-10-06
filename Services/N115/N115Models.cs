@@ -94,6 +94,47 @@ public sealed class N115QrLoginResponse
     [JsonPropertyName("data")] public N115QrLoginData? Data { get; set; }
 }
 
+// ---------------- OpenAPI（开放平台 OAuth2.0 设备码授权） ----------------
+
+/// <summary>authDeviceCode 返回的设备码：uid 既是轮询键也是二维码内容。</summary>
+public sealed class N115OpenDeviceCode
+{
+    [JsonPropertyName("uid")] public string? Uid { get; set; }
+    [JsonPropertyName("time")] public long Time { get; set; }
+    [JsonPropertyName("sign")] public string? Sign { get; set; }
+    /// <summary>开放平台返回的二维码内容（需自行编码成二维码图）。</summary>
+    [JsonPropertyName("qrcode")] public string? QrCode { get; set; }
+    [JsonPropertyName("expires_in")] public long ExpiresIn { get; set; }
+}
+
+public sealed class N115OpenDeviceCodeResponse
+{
+    [JsonPropertyName("state")] public int State { get; set; }
+    [JsonPropertyName("code")] public int Code { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+    [JsonPropertyName("errno")] public int Errno { get; set; }
+    [JsonPropertyName("data")] public N115OpenDeviceCode? Data { get; set; }
+}
+
+/// <summary>OpenAPI 令牌对：access 短期、refresh 长期（续期用）。</summary>
+public sealed class N115OpenTokens
+{
+    [JsonPropertyName("access_token")] public string? AccessToken { get; set; }
+    [JsonPropertyName("refresh_token")] public string? RefreshToken { get; set; }
+    [JsonPropertyName("expires_in")] public long ExpiresIn { get; set; }
+}
+
+public sealed class N115OpenTokenResponse
+{
+    [JsonPropertyName("state")] public int State { get; set; }
+    [JsonPropertyName("code")] public int Code { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+    [JsonPropertyName("errno")] public int Errno { get; set; }
+    [JsonPropertyName("data")] public N115OpenTokens? Data { get; set; }
+}
+
 // ---------------- 通用返回（webapi / my.115.com） ----------------
 
 public class N115BasicResponse

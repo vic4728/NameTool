@@ -46,14 +46,33 @@ public enum N115ProbeOutcome
 public sealed class N115Client : IDisposable
 {
     public const string ApiFileList = "https://webapi.115.com/files";
+    public const string ApiFolderAdd = "https://webapi.115.com/files/add";
     public const string ApiFileRename = "https://webapi.115.com/files/batch_rename";
     public const string ApiFileMove = "https://webapi.115.com/files/move";
     public const string ApiFileCopy = "https://webapi.115.com/files/copy";
     public const string ApiFileDelete = "https://webapi.115.com/rb/delete";
 
-    private const string ApiQrToken = "https://qrcodeapi.115.com/api/1.0/web/1.0/token";
+    // 扫码登录三件套。⚠️ 三处通道（token / login 的 URL 与 app 参数）必须一致，否则确认事件对不上。
+    // 2026-10-06 起默认走 **mac 桌面客户端通道**（可由授权窗口按用户选择指定其它设备），
+    // 不再用 web —— 实测 web 通道的手机确认与手机 App 自身的登录位冲突：手机点了「确认登录」，
+    // 事件落到手机会话而不是程序的 web 会话，status 永远停在 1（「扫描成功，请在手机点确认」），
+    // 窗口一直卡住关不掉（用户实测踩坑）。mac 等其它设备通道是独立登录位，确认后 status 正常到 2。
     private const string ApiQrStatus = "https://qrcodeapi.115.com/get/status/";
-    private const string ApiQrLogin = "https://passportapi.115.com/app/1.0/web/1.0/login/qrcode";
+
+    /// <summary>设备通道的 token 端点（每台设备一个独立登录位）。</summary>
+    private static string QrTokenUrl(string device) => $"https://qrcodeapi.115.com/api/1.0/{device}/1.0/token";
+
+    /// <summary>设备通道的「扫码确认 → 换 Cookie」端点。</summary>
+    private static string QrLoginUrl(string device) => $"https://passportapi.115.com/app/1.0/{device}/1.0/login/qrcode/";
+
+    /// <summary>设备通道的官方二维码渲染图（内容含本次会话 uid）。</summary>
+    public static string QrImageUrl(string device, string uid) =>
+        $"https://qrcodeapi.115.com/api/1.0/{device}/1.0/qrcode?uid={Uri.EscapeDataString(uid)}";
+
+    /// <summary>OpenAPI（开放平台 OAuth2.0）设备码授权端点：拿设备码 → 用户扫码确认 → 换 token。</summary>
+    private const string ApiOpenDeviceCode = "https://passportapi.115.com/open/authDeviceCode";
+    private const string ApiOpenCodeToToken = "https://passportapi.115.com/open/deviceCodeToToken";
+    private const string ApiOpenRefreshToken = "https://passportapi.115.com/open/refreshToken";
     /// <summary>
     /// 登录态探测端点。⚠️ 旧的 <c>my.115.com/?ct=guide&amp;ac=status</c> 已于 2026-10-04 前后下线
     /// （实测返回的是跳转 115.com 首页的 HTML，不再是 JSON）。
@@ -296,10 +315,10 @@ public sealed class N115Client : IDisposable
 
     // ---------------- 扫码登录 ----------------
 
-    /// <summary>第 1 步：取二维码内容与设备码。</summary>
-    public async Task<N115QrSession> StartQrLoginAsync(CancellationToken ct)
+    /// <summary>第 1 步：按指定设备通道取二维码会话（uid/time/sign）。</summary>
+    public async Task<N115QrSession> StartQrLoginAsync(string device, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, ApiQrToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, QrTokenUrl(device));
         using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
@@ -308,7 +327,9 @@ public sealed class N115Client : IDisposable
         }
 
         var parsed = await ReadJsonAsync<N115QrTokenResponse>(response, ct).ConfigureAwait(false);
-        if (parsed.State != 1 || parsed.Data is null || string.IsNullOrWhiteSpace(parsed.Data.QrCode))
+        // ⚠️ 只校验 uid：多数设备通道的 token 响应 data 里没有 qrcode 字段（web 通道才有），
+        // 而窗口渲染二维码本来就是拿 uid 自己拼图（LoadQrImageAsync），不依赖这个字段。
+        if (parsed.State != 1 || parsed.Data is null || string.IsNullOrWhiteSpace(parsed.Data.Uid))
         {
             throw new N115ApiException($"获取二维码失败：{parsed.Message ?? parsed.Error ?? "接口未返回二维码"}");
         }
@@ -331,17 +352,18 @@ public sealed class N115Client : IDisposable
         return parsed.Data ?? new N115QrStatus { Status = 0, Msg = "等待扫码" };
     }
 
-    /// <summary>第 3 步：确认后换取登录 Cookie。</summary>
-    public async Task<N115Credential> CompleteQrLoginAsync(N115QrSession session, CancellationToken ct)
+    /// <summary>第 3 步：确认后换取登录 Cookie（device 必须与第 1 步的通道一致）。</summary>
+    public async Task<N115Credential> CompleteQrLoginAsync(N115QrSession session, string device, CancellationToken ct)
     {
         using var content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["account"] = session.Uid ?? string.Empty,
-            ["app"] = "web",
+            // 必须与 token 通道一致：不一致时手机确认事件对不上（见 ApiQrStatus 上方注释）
+            ["app"] = device,
         });
         // 115 的登录接口按表单解析参数，Content-Type 必须是 application/x-www-form-urlencoded，
         // 换成 application/json 会被判成「参数错误」。
-        using var response = await _http.PostAsync(ApiQrLogin, content, ct).ConfigureAwait(false);
+        using var response = await _http.PostAsync(QrLoginUrl(device), content, ct).ConfigureAwait(false);
         var parsed = await ReadJsonAsync<N115QrLoginResponse>(response, ct).ConfigureAwait(false);
 
         if (parsed.State != 1 || parsed.Data?.Cookie is null)
@@ -357,6 +379,7 @@ public sealed class N115Client : IDisposable
             KID = parsed.Data.Cookie.KID ?? string.Empty,
             UserName = parsed.Data.UserName ?? string.Empty,
             UserId = parsed.Data.UserId,
+            CookieDevice = device,
         };
 
         if (!credential.IsValid)
@@ -366,6 +389,70 @@ public sealed class N115Client : IDisposable
 
         UseCredential(credential);
         return credential;
+    }
+
+    // ---------------- OpenAPI（开放平台 OAuth2.0）设备码授权 ----------------
+
+    /// <summary>
+    /// OpenAPI 第 1 步：拿设备码（uid + 二维码内容）。用户在手机 115 App 里扫码确认后，
+    /// 第 2 步用同一个 uid + code_verifier 换 token。
+    /// PKCE：code_verifier 由调用方生成并保存，code_challenge = BASE64URL(SHA256(verifier))。
+    /// </summary>
+    public async Task<N115OpenDeviceCode> StartOpenAuthAsync(string appId, string codeChallenge, CancellationToken ct)
+    {
+        using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["client_id"] = appId,
+            ["code_challenge"] = codeChallenge,
+            ["code_challenge_method"] = "S256",
+        });
+        using var response = await _http.PostAsync(ApiOpenDeviceCode, content, ct).ConfigureAwait(false);
+        var parsed = await ReadJsonAsync<N115OpenDeviceCodeResponse>(response, ct).ConfigureAwait(false);
+
+        if (parsed.State != 1 || parsed.Data is null || string.IsNullOrWhiteSpace(parsed.Data.Uid))
+        {
+            throw new N115ApiException($"获取授权码失败：{parsed.Message ?? parsed.Error ?? "接口未返回设备码"}");
+        }
+
+        return parsed.Data;
+    }
+
+    /// <summary>OpenAPI 第 2 步：用户确认后，uid + code_verifier 换 access/refresh token。</summary>
+    public async Task<N115OpenTokens> CompleteOpenAuthAsync(string appId, string uid, string codeVerifier, CancellationToken ct)
+    {
+        using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["client_id"] = appId,
+            ["uid"] = uid,
+            ["code_verifier"] = codeVerifier,
+        });
+        using var response = await _http.PostAsync(ApiOpenCodeToToken, content, ct).ConfigureAwait(false);
+        return ParseOpenTokens(response);
+    }
+
+    /// <summary>OpenAPI 第 3 步：refresh_token 换新 token 对（长期授权免重扫的关键）。</summary>
+    public async Task<N115OpenTokens> RefreshOpenTokenAsync(string appId, string refreshToken, CancellationToken ct)
+    {
+        using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["client_id"] = appId,
+            ["refresh_token"] = refreshToken,
+        });
+        using var response = await _http.PostAsync(ApiOpenRefreshToken, content, ct).ConfigureAwait(false);
+        return ParseOpenTokens(response);
+    }
+
+    private N115OpenTokens ParseOpenTokens(HttpResponseMessage response)
+    {
+        var parsed = ReadJsonAsync<N115OpenTokenResponse>(response, CancellationToken.None)
+            .GetAwaiter().GetResult();
+
+        if (parsed.State != 1 || parsed.Data is null || string.IsNullOrWhiteSpace(parsed.Data.AccessToken))
+        {
+            throw new N115ApiException($"换取令牌失败：{parsed.Message ?? parsed.Error ?? "接口未返回令牌"}");
+        }
+
+        return parsed.Data;
     }
 
     // ---------------- 账号校验 ----------------
@@ -429,6 +516,24 @@ public sealed class N115Client : IDisposable
         }
     }
 
+    /// <summary>OpenAPI 用户信息（用 access_token 鉴权；失败返回 null，不影响授权流程）。</summary>
+    public async Task<N115UserInfoData?> GetOpenUserInfoAsync(string accessToken, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get, $"https://proapi.115.com/open/user/info?_={NowMilli()}");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            var parsed = await ReadJsonAsync<N115UserInfoResponse>(response, ct).ConfigureAwait(false);
+            return parsed.State ? parsed.Data : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // ---------------- 目录 / 文件 ----------------
 
     /// <summary>列出目录内容。cid 为 "0" 表示根目录。</summary>
@@ -463,6 +568,28 @@ public sealed class N115Client : IDisposable
                 ["fid"] = fileId,
                 ["file_name"] = newName,
                 [$"files_new_name[{fileId}]"] = newName,
+            }),
+            ct).ConfigureAwait(false);
+
+        ThrowIfFailed(parsed);
+    }
+
+    /// <summary>
+    /// 在目录 <paramref name="parentCid"/> 下新建文件夹。
+    /// web 端「新建文件夹」就是 POST /files/add：pid=父目录 cid、cname=目录名（表单，非 json）。
+    /// ⚠️ 两个坑（2026-10-06 真账号实测，建目录后拉列表核对落库名）：
+    /// ① 参数名是 <c>cname</c> 不是 folder_name —— 传 folder_name 服务端一律报「目录名称不能为空」；
+    /// ② cname 传**原始名字**即可（FormUrlEncodedContent 的标准编码就是它要的）；
+    ///    先做一次 EscapeDataString 反而会把「%20…」存成字面名字（服务端只解一层）。
+    /// </summary>
+    public async Task CreateFolderAsync(string parentCid, string folderName, CancellationToken ct)
+    {
+        var parsed = await PostFormWithRetryAsync<N115BasicResponse>(
+            ApiFolderAdd,
+            () => new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["pid"] = parentCid,
+                ["cname"] = folderName,
             }),
             ct).ConfigureAwait(false);
 
