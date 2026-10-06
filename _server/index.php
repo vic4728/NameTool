@@ -11,36 +11,43 @@
  *   GET /update/?stats        → 返回 HTML 升级 / 下载统计页（每版本总量）
  *   GET /update/?file=xxx.exe → 下载指定文件并计数
  *
- * 目录自清理：任意请求进来时，自动只保留版本号最新的
- * KEEP_INSTALLERS 个 NameTool_v*_Setup.exe，更旧的安装包直接删除。
+ * 目录自清理：任意请求进来时，自动只保留版本号最新的 KEEP_VERSIONS 个版本
+ * （每版本 = Setup.exe 安装包 + Portable.zip 便携包），更旧版本的文件直接删除。
  * downloads.json 的历史计数不删，统计页照常显示「已下架」版本。
  */
-
-define('KEEP_INSTALLERS', 2);
-
 $dir = __DIR__;
 $countFile = $dir . '/downloads.json';
 $notesFile = $dir . '/release-notes.json';
 
 /**
- * 只保留最新 KEEP_INSTALLERS 个版本的安装包，其余删除。
- * 幂等且并发安全（unlink 失败静默继续）。
+ * 只保留最新 KEEP_VERSIONS 个版本的发布文件（每版本 = 安装包 Setup.exe + 便携包 Portable.zip），
+ * 更旧版本的两种文件都删。幂等且并发安全（unlink 失败静默继续）。
+ * 2026-10-06 起：便携绿色版与安装版同时发布，裁剪按「版本号」去重而非文件数。
  */
+define('KEEP_VERSIONS', 2);
+
 function pruneOldInstallers($dir) {
-    $installers = [];
+    // 文件名 => 版本号（两种命名都认）
+    $files = [];
     foreach (scandir($dir) ?: [] as $entry) {
         if (preg_match('/^NameTool_v(\d+(?:\.\d+)+)_Setup\.exe$/i', $entry, $m)) {
-            $installers[$entry] = $m[1];
+            $files[$entry] = $m[1];
+        } elseif (preg_match('/^NameTool_v(\d+(?:\.\d+)+)_Portable\.zip$/i', $entry, $m)) {
+            $files[$entry] = $m[1];
         }
     }
-    if (count($installers) <= KEEP_INSTALLERS) {
+    if (count($files) <= KEEP_VERSIONS * 2) {
         return;
     }
-    uasort($installers, function ($a, $b) {
+    $versions = array_unique(array_values($files));
+    usort($versions, function ($a, $b) {
         return version_compare($b, $a); // 版本号新的在前
     });
-    foreach (array_slice(array_keys($installers), KEEP_INSTALLERS) as $name) {
-        @unlink($dir . '/' . $name);
+    $keepVersions = array_slice($versions, 0, KEEP_VERSIONS);
+    foreach ($files as $name => $ver) {
+        if (!in_array($ver, $keepVersions, true)) {
+            @unlink($dir . '/' . $name);
+        }
     }
 }
 pruneOldInstallers($dir);

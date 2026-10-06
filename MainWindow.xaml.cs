@@ -1478,6 +1478,17 @@ public partial class MainWindow : Window
         _logWindow.Activate();
     }
 
+    /// <summary>
+    /// 功能栏底部的「关于/帮助」（原「检查更新」旁边，2026-10-06 起）：
+    /// 弹出 AboutHelpWindow（GitHub 图标 + 三个入口：GitHub 地址 / 反馈问题 / 下载新版本）。
+    /// 「检查更新」保留为独立按钮（自动检查更新的入口不变）。
+    /// </summary>
+    private void AboutHelp_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new AboutHelpWindow { Owner = this };
+        dlg.ShowDialog();
+    }
+
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
     {
         var button = sender as System.Windows.Controls.Button;

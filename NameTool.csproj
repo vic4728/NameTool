@@ -10,7 +10,7 @@
     <RootNamespace>NameTool</RootNamespace>
 
     <!-- 版本号：只需维护此处 Version，其它版本信息自动同步 -->
-    <Version>2.2.0</Version>
+    <Version>2.2.1</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
@@ -19,7 +19,7 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- 图标：程序、编译产物使用统一 ico -->
-    <ApplicationIcon>Images\logo-2-1.ico</ApplicationIcon>
+    <ApplicationIcon>Images\logo.ico</ApplicationIcon>
 
     <!-- 国内镜像源不提供漏洞库数据，开着审计只会刷 NU1900 警告，直接关掉 -->
     <NuGetAudit>false</NuGetAudit>
@@ -30,13 +30,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Images\logo-2-1.ico" />
+    <Resource Include="Images\logo.ico" />
+    <Resource Include="Images\logo.png" />
     <!-- 工具栏 / 路径栏图标用 PNG：WPF 不原生支持 SVG，手工转 XAML 几何会和原图不一致，
          改用位图保证所见即所得。⚠️ 必须显式声明（实测通配符 Images\ico\*.png 在 WPF 资源管线
          里会静默丢文件：加了 Edit-ico-16.png 后 Edit-ico.png 就不再嵌入，clean 也救不回来）。
          新增图标：把 PNG 丢进 Images\ico\ 后在这里补一行。 -->
     <Resource Include="Images\ico\Edit-ico-1.png" />
     <Resource Include="Images\ico\new file-ico.png" />
+    <Resource Include="Images\ico\github-fill.png" />
   </ItemGroup>
 
   <!-- 「繁=>简」词典（HanLP tc/t2s 为主 + OpenCC 补缺，约 4800 条 / 45KB）。

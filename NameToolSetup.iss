@@ -7,7 +7,7 @@
 #define ExeName "NameTool.exe"
 #define PublishDir "E:\Visual\NameTool\publish"
 #define OutputDir "E:\build\NameTool\installer"
-#define AppIcon "E:\Visual\NameTool\Images\logo-2-1.ico"
+#define AppIcon "E:\Visual\NameTool\Images\logo.ico"
 #define AppVersion GetStringFileInfo(PublishDir + "\" + ExeName, "ProductVersion")
 #define SetupName "NameTool_v" + AppVersion + "_Setup"
 

@@ -53,7 +53,17 @@ public sealed class UpdateService
 
             if (latestFile is null)
             {
-                return new UpdateCheckResult { Status = UpdateStatus.UpToDate, Message = $"当前版本 v{currentVersion} 已是最新版本" };
+                // 已是最新：也把当前版本的更新说明带上（「关于/帮助」弹窗要显示「最新发布版本」的更新内容）
+                List<string>? currentNotes = null;
+                apiResp.Data.ReleaseNotes?.TryGetValue(currentVersion.ToString(), out currentNotes);
+
+                return new UpdateCheckResult
+                {
+                    Status = UpdateStatus.UpToDate,
+                    Message = $"当前版本 v{currentVersion} 已是最新版本",
+                    NewVersion = currentVersion.ToString(),
+                    Notes = currentNotes,
+                };
             }
 
             var downloadUrl = string.IsNullOrWhiteSpace(latestFile.Url)
@@ -203,29 +213,44 @@ public sealed class UpdateService
         return match.Success && Version.TryParse(match.Groups[1].Value, out var v) ? v : null;
     }
 
-    // API 响应模型
+    // API 响应模型。
+    // ⚠️ 全部属性用 [JsonPropertyName] 显式映射 json 字段名（2026-10-06 排查「关于/帮助」看不到更新内容
+    // 时定位的坑）：.NET 10 SDK 下 PropertyNameCaseInsensitive=true 对 snake_case 字段（release_notes /
+    // size_human）**不能稳定命中**——实测 Files（Files/files 小写差异）能匹配、ReleaseNotes 匹配失败恒 null。
+    // 显式名字不依赖 insensitive 匹配，跨 SDK 版本稳定。加新字段照抄写法。
     private sealed class ApiResponse<T>
     {
+        [System.Text.Json.Serialization.JsonPropertyName("code")]
         public int Code { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
         public string? Message { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("data")]
         public T? Data { get; set; }
     }
 
     private sealed class UpdateListData
     {
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
         public int Total { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("files")]
         public List<UpdateFileEntry> Files { get; set; } = [];
 
         /// <summary>版本号 → 大白话更新内容列表（来自服务器 release-notes.json）。</summary>
+        [System.Text.Json.Serialization.JsonPropertyName("release_notes")]
         public Dictionary<string, List<string>>? ReleaseNotes { get; set; }
     }
 
     private sealed class UpdateFileEntry
     {
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("size")]
         public long Size { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("size_human")]
         public string? SizeHuman { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("modified")]
         public string? Modified { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string? Url { get; set; }
     }
 }

@@ -344,7 +344,7 @@
                     <ColumnDefinition Width="34"/>
                 </Grid.ColumnDefinitions>
 
-                <Image Grid.Column="0" Width="16" Height="16" Margin="8,0,2,0" VerticalAlignment="Center" Source="/Images/logo-2-1.ico"/>
+                <Image Grid.Column="0" Width="16" Height="16" Margin="8,0,2,0" VerticalAlignment="Center" Source="/Images/logo.ico"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0,0,0">
                     <TextBlock x:Name="TitleText" VerticalAlignment="Center" FontSize="15" Foreground="#333" Text="NameTool"/>
                     <!-- 版本号胶囊：紧凑（高 17 / 字号 11 / 左右 6），主题蓝底白字 -->
@@ -353,7 +353,8 @@
                         <TextBlock x:Name="VersionPillText" Text="v0.0.0" FontSize="11" FontWeight="Bold"
                                    Foreground="#FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                     </Border>
-                    <TextBlock Text="By Vic4728" Margin="7,0,0,0" VerticalAlignment="Center" FontSize="13" Foreground="#8A94A6"/>
+                    <!-- 「By Vic4728」已按用户要求移除（2026-10-06），作者信息挪到「关于/帮助」弹窗右下角 -->
+                    <TextBlock Text="" Margin="7,0,0,0" VerticalAlignment="Center" FontSize="13" Foreground="#8A94A6" Visibility="Collapsed"/>
                 </StackPanel>
 
                 <TextBlock x:Name="UpdateNoticeText"
@@ -1707,7 +1708,14 @@
                     <Button Content="开始处理" Width="80" Height="28" Background="#1890FF" Foreground="White" Command="{Binding RunCommand}" Margin="0,0,6,6"/>
                     <Button Content="批量处理" Width="80" Height="28" Background="#52C41A" Foreground="Black" Command="{Binding RunReplaceOnlyCommand}" Margin="0,0,6,6"/>
                     <Button Content="日志" Width="60" Height="28" Background="#FA8C16" Foreground="Black" Click="ShowLogs_Click" Margin="0,0,6,6"/>
-                    <Button Content="检查更新" Width="80" Height="28" Click="CheckUpdate_Click" Margin="0,0,0,6"/>
+                    <Button Width="96" Height="28" Click="AboutHelp_Click" Margin="0,0,0,6"
+                            Background="#FFFFFF" BorderBrush="#C9DDF4" Cursor="Hand"
+                            ToolTip="关于 / 帮助：GitHub 地址、反馈问题、下载新版本">
+                        <StackPanel Orientation="Horizontal">
+                            <Image Source="/Images/ico/github-fill.png" Width="16" Height="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="关于/帮助" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
             </StackPanel>
         </ScrollViewer>
