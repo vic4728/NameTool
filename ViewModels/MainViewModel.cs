@@ -61,6 +61,7 @@ public sealed class MainViewModel : ObservableObject
 
     // ---- 编辑模式自动备份（用户要求：底部 [自动保存|"保存时间"秒]，默认开、默认 10 秒）----
     private bool _autoSaveEnabled = true;
+    private bool _debugLogEnabled;
     private int _autoSaveSeconds = 10;
 
     /// <summary>自动备份上次写入的内容：没变化就不重复写盘。</summary>
@@ -78,6 +79,25 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _autoSaveEnabled;
         set => SetProperty(ref _autoSaveEnabled, value);
+    }
+
+    /// <summary>
+    /// DEBUG 日志开关（用户要求，2026-10-06「日志调整到 DEBUG，记录所有操作返回信息」）：
+    /// 开启后各操作的返回信息（接口返回码 / 写回结果 / 跳过原因等）以 [DEBUG] 级别进窗口与文件。
+    /// 持久化在 ui-state.json（debug-log 键），重启记住。
+    /// </summary>
+    public bool DebugLogEnabled
+    {
+        get => _debugLogEnabled;
+        set
+        {
+            if (SetProperty(ref _debugLogEnabled, value))
+            {
+                Services.FileLogSink.DebugEnabled = value;
+                UiStateStore.SetBool("debug-log", value);
+                Log(value ? "已开启 DEBUG 日志（记录所有操作返回信息）" : "已关闭 DEBUG 日志");
+            }
+        }
     }
 
     /// <summary>自动备份间隔（秒），默认 10，钳制到 1~86400。</summary>
@@ -290,6 +310,9 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _currentMode, value))
             {
                 ReturnToListCommand?.RaiseCanExecuteChanged();
+                // ⚠️ 进/出编辑器都要刷「替换（应用到编辑器）」——不刷的话按钮停在启动时的禁用态，
+                // 表现就是「填了查找和替换内容也点不动替换按钮」（用户实测踩坑）
+                ApplyRulesToEditorCommand?.RaiseCanExecuteChanged();
             }
         }
     }
@@ -2097,27 +2120,8 @@ public sealed class MainViewModel : ObservableObject
         // 一个都没勾选时兜底为「全部」——与范围条上写明的「将处理全部 N 个文件」一致，不会悄悄什么都不做。
         var targets = ResolveRenameTargets(Files);
 
-        var scopeNote = targets.Count == Files.Count
-            ? $"{targets.Count} 个文件"
-            : $"{targets.Count} 个文件（已勾选，共 {Files.Count} 个；未勾选的不会被动到）";
-
-        var outputNote = string.Empty;   // 处理方式条已移除：永远覆盖原文件，没有「输出到目录」的说明可加
-
-        var confirmText = mode switch
-        {
-            RunMode.LanguageOnly => $"确认对 {scopeNote} 执行「删除字幕外语」（{DescribeLanguageSelection(rmEn, rmJp, rmKr)}）？",
-            RunMode.ToSimplifiedOnly =>
-                $"确认对 {scopeNote} 执行「繁=>简」？\n\n"
-                + "· 文件名：繁体字转简体（扩展名不动）\n"
-                + "· 文本内容（字幕 / 文本类文件）：一并转换并写回；二进制文件只改文件名\n"
-                + "· 不套用右侧的替换 / 序号 / 添加删除规则"
-                + outputNote,
-            RunMode.Full => $"确认处理 {scopeNote}？",
-            _ => $"确认仅批量替换 {scopeNote}？",
-        };
-
-        var okCancel = UiDialog.Show(confirmText, "确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (okCancel != MessageBoxResult.Yes) return;
+        // 2026-10-06 起不再弹「确认继续？」——直接执行，完成后弹「成功 / 失败数量」报告框。
+        // 执行前的计划要点照旧写日志（不依赖确认框留痕）。
 
         var options = toSimplifiedOnly
             ? BuildToSimplifiedOptions(true, MakeBackup, null)
@@ -2341,11 +2345,14 @@ public sealed class MainViewModel : ObservableObject
             {
                 ok++;
                 Log($"[OK] ({i + 1}/{targets.Count}) {file.OriginalFileName} → {res.Message}");
+                Services.FileLogSink.Debug($"[本地] ({i + 1}/{targets.Count}) {file.OriginalFileName} 处理返回：Success=true, Message={res.Message}"
+                    + (res.NewFilePath is null ? "" : $", NewFilePath={res.NewFilePath}"));
             }
             else
             {
                 fail++;
                 LogError($"[FAIL] ({i + 1}/{targets.Count}) {file.OriginalFileName} - {res.Message}");
+                Services.FileLogSink.Debug($"[本地] ({i + 1}/{targets.Count}) {file.OriginalFileName} 处理返回：Success=false, Message={res.Message}");
             }
         }
 
@@ -2679,9 +2686,9 @@ public sealed class MainViewModel : ObservableObject
 
     public void Log(string message)
     {
-        // 日志窗口每条带时间戳（用户要求，2026-10-06）；落盘文件由 FileLogSink 自带时间戳 + 级别，
-        // 所以那里仍传原始 message，避免一行出现两个时间戳
-        Logs.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+        // 日志窗口每条带时间戳（用户要求，2026-10-06；同年 10-06 起去掉年份只显示 MM-dd HH:mm:ss）；
+        // 落盘文件由 FileLogSink 自带完整时间戳 + 级别，所以那里仍传原始 message，避免一行出现两个时间戳
+        Logs.Add($"[{DateTime.Now:MM-dd HH:mm:ss}] {message}");
         FileLogSink.Write(message);
     }
 
@@ -2691,7 +2698,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     public void LogError(string message)
     {
-        Logs.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ERROR] {message}");
+        Logs.Add($"[{DateTime.Now:MM-dd HH:mm:ss}] [ERROR] {message}");
         FileLogSink.Write(message, "ERROR");
     }
 

@@ -60,6 +60,15 @@ public partial class MainWindow : Window
         // ApplyTemplate 让 RoundedGroupBoxStyle 的 BodyPresenter 立即可查。
         RestoreSectionStates();
 
+        // 主轴分栏：初始按 列表 2 : 功能区 1 分配；此后**拉伸窗口外框只加宽列表区**，
+        // 功能区固定在当前宽度（Loaded 时拍快照写到列宽）。Splitter 仍可手动改功能区宽度，
+        // 拖动结束的宽度成为新的「当前宽度」，外框再拉伸时维持它不变。
+        Loaded += MainWindow_Loaded_SizeSeed;
+        SizeChanged += MainWindow_SizeChanged_FixFunctions;
+
+        // DEBUG 日志开关恢复（持久化在 ui-state.json 的 debug-log 键）
+        Vm.DebugLogEnabled = UiStateStore.GetBool("debug-log", fallback: false);
+
         Closing += (sender, args) =>
         {
             // 编辑器里有没保存的改动：先问保存 / 不保存 / 取消，取消就不关窗
@@ -105,6 +114,42 @@ public partial class MainWindow : Window
             if (Vm.SelectedFile is { } item) Vm.WriteAutoBackupNow(item);
         };
         _autoSaveTimer.Start();
+    }
+
+    /// <summary>
+    /// 「批量替换」区底部的「替换」按钮：双路由（与「开始」按钮同一语义）。
+    /// 115 网盘模式 → 按规则改网盘条目文件名：**有选中改选中，没选中改全部**（与预览列的
+    /// fallback 语义对齐 —— 预览没选中时也是按全部条目显示的，替换必须同一口径，否则
+    /// 用户看到预览有结果、点替换却提示「请先选中」，感知为「没生效」）；
+    /// 本地编辑模式 → 把规则应用到正在编辑的文件内容。
+    /// 故意走 Click 而不是 Command：命令的 CanExecute 在选中变化时的重查时机不稳，实测点不动。
+    /// </summary>
+    private void ReplaceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (Vm.N115.IsActive)
+        {
+            Vm.N115.ReplaceByRules();
+            return;
+        }
+
+        // 本地：双路由语义补全（用户实测踩坑：列表模式下没进编辑器时点「替换」毫无反馈）。
+        // ① 已在编辑模式（编辑器命令可用）→ 应用规则到正在编辑的内容（原语义）；
+        // ② 在列表模式且有勾选/文件 → 等价于「批量处理」：对文件名执行查找替换（与预览列同一口径），
+        //    完成后弹成功/失败报告；
+        // ③ 什么都没有 → 状态栏明确提示。
+        if (Vm.ApplyRulesToEditorCommand.CanExecute(null))
+        {
+            Vm.ApplyRulesToEditorCommand.Execute(null);
+            return;
+        }
+
+        if (Vm.Files.Count > 0)
+        {
+            Vm.RunReplaceOnlyCommand.Execute(null);
+            return;
+        }
+
+        Vm.SetEditorStatus("列表为空：请先添加文件（或双击文本文件进入编辑模式后再替换）");
     }
 
     /// <summary>
@@ -1218,6 +1263,72 @@ public partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    // ---------------- 主轴分栏：外框拉伸只加宽列表区，功能区宽度锁定 ----------------
+
+    /// <summary>Splitter 手动拖完：把功能区新宽度钉下来，成为之后外框拉伸时的锁定值。</summary>
+    private void MainSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        if (FindName("MainAxisGrid") is System.Windows.Controls.Grid grid)
+        {
+            FixFunctionColumn(grid);
+        }
+    }
+
+    /// <summary>主轴 Grid 的三列（列表 / Splitter / 功能区），加载后按 列表 2 : 功能区 1 给初始宽。</summary>
+    private void MainWindow_Loaded_SizeSeed(object sender, RoutedEventArgs e)
+    {
+        Loaded -= MainWindow_Loaded_SizeSeed;
+        var grid = (System.Windows.Controls.Grid)FindName("MainAxisGrid")!;
+        SeedColumns(grid);
+    }
+
+    /// <summary>拉伸窗口外框时把功能区列宽固定成当前实际宽，让列表区吃掉全部变化量。
+    /// 用 _fixingColumns 防重入（我们改列宽又会触发 SizeChanged）。</summary>
+    private bool _fixingColumns;
+
+    private void MainWindow_SizeChanged_FixFunctions(object sender, SizeChangedEventArgs e)
+    {
+        if (_fixingColumns) return;
+        _fixingColumns = true;
+        try
+        {
+            if (FindName("MainAxisGrid") is System.Windows.Controls.Grid grid
+                && grid.ColumnDefinitions.Count == 3)
+            {
+                FixFunctionColumn(grid);
+            }
+        }
+        finally
+        {
+            _fixingColumns = false;
+        }
+    }
+
+    /// <summary>Loaded 时按 列表 2 : 功能区 1 分配初始宽度（窗口内容区宽 = 外框 - 2×边距）。</summary>
+    private void SeedColumns(System.Windows.Controls.Grid grid)
+    {
+        var cols = grid.ColumnDefinitions;
+        if (cols.Count != 3) return;
+
+        // 内容可用宽 = 外框宽 - 外框边框 2 - Grid Margin 20；再减 Splitter 12
+        var available = ActualWidth - 22 - 12;
+        var functionWidth = System.Math.Max(cols[2].MinWidth, available / 3.0);
+        cols[2].Width = new GridLength(functionWidth, GridUnitType.Pixel);
+    }
+
+    /// <summary>把功能区列宽钉在当前实际宽（含 Splitter 手动拖完的新值），列表区（1*）吸收其余变化。</summary>
+    private void FixFunctionColumn(System.Windows.Controls.Grid grid)
+    {
+        var cols = grid.ColumnDefinitions;
+        if (cols.Count != 3) return;
+
+        var functionColumn = cols[2];
+        // 取当前实际宽；Auto 列在首次布局前可能为 0，此时不动（等 Loaded 种子值）
+        var current = functionColumn.ActualWidth;
+        if (current < functionColumn.MinWidth) return;
+        functionColumn.Width = new GridLength(current, GridUnitType.Pixel);
     }
 
     // ---------------- 功能区分组：展开 / 收起（状态记忆） ----------------

@@ -374,18 +374,48 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" Margin="10">
+        <Grid Grid.Row="1" Margin="10" x:Name="MainAxisGrid">
             <Grid.ColumnDefinitions>
-                <!-- 列表区 : 功能区 = 2 : 1（原先 3 : 2）。
-                     把更多宽度让给左侧列表（两个 DataGrid 的列宽都是 *，会跟着一起变宽）；
-                     功能区只剩约 1/3，所以里面所有固定宽度都必须改成可伸缩 / 可换行，
-                     并给出 MinWidth 下限 —— 到 420 就是功能区还能排得下的极限。
-                     左侧留 500 下限，保证「参与 / 原文件名 / 预览 / 状态」四列不被压扁。 -->
-                <ColumnDefinition Width="2*" MinWidth="500"/>
-                <ColumnDefinition Width="*" MinWidth="420"/>
+                <!-- 列表区 / 拖动条 / 功能区。
+                     2026-10-06 用户要求：**拉伸窗口外框时只有列表区变宽，功能区保持当前宽度不变** ——
+                     所以功能区列改成固定 Width="Auto"（由内容决定、由 SizeChanged 固定快照），
+                     列表区保持 1* 吃掉全部富余。功能区仍保留 MinWidth=420 下限 + Splitter 可手动拖宽；
+                     两栏比例的初始值在 code-behind MainWindow_Loaded 里按 2:1 设定。 -->
+                <ColumnDefinition Width="*" MinWidth="500"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto" MinWidth="420"/>
             </Grid.ColumnDefinitions>
 
-        <GroupBox Margin="0,0,10,0" Background="#F6FBFF">
+            <!-- 分栏拖动条：平时只有中间一个小竖条提示「这里能拖」，悬停整条泳道淡蓝高亮；
+                 抓取区宽 12px 比竖条好按。透明背景保证命中测试有效，拖动结束不残留任何颜色。 -->
+            <GridSplitter Grid.Column="1" Width="12"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                          ShowsPreview="False"
+                          DragCompleted="MainSplitter_DragCompleted"
+                          Background="Transparent">
+                <GridSplitter.Template>
+                    <ControlTemplate TargetType="GridSplitter">
+                        <Border x:Name="Lane" Background="{TemplateBinding Background}">
+                            <Rectangle Width="3" Height="46"
+                                       Fill="#C4D6EE"
+                                       RadiusX="1.5" RadiusY="1.5"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Lane" Property="Background" Value="#E3F0FF"/>
+                                <Setter Property="Cursor" Value="SizeWE"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Lane" Property="Background" Value="#D0E7FF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
+
+        <GroupBox Grid.Column="0" Margin="0,0,0,0" Background="#F6FBFF">
             <GroupBox.Style>
                 <Style TargetType="GroupBox" BasedOn="{StaticResource RoundedGroupBoxStyle}">
                     <Setter Property="Header" Value="文件列表"/>
@@ -1229,7 +1259,7 @@
             </DockPanel>
         </GroupBox>
 
-        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <GroupBox Header="批量替换" Margin="0,0,0,10" Style="{StaticResource RoundedGroupBoxStyle}" Background="#EEF7FF">
                     <Grid Margin="8">
@@ -1307,12 +1337,14 @@
                                             <TextBox Margin="0,3,0,6" Height="52"
                                                      TextWrapping="Wrap" AcceptsReturn="True"
                                                      VerticalScrollBarVisibility="Auto"
+                                                     infra:VariableAutoComplete.IsEnabled="True"
                                                      Text="{Binding FindText, UpdateSourceTrigger=PropertyChanged}"/>
 
                                             <TextBlock Text="替换为（Replace）"/>
                                             <TextBox Margin="0,3,0,0" Height="52"
                                                      TextWrapping="Wrap" AcceptsReturn="True"
                                                      VerticalScrollBarVisibility="Auto"
+                                                     infra:VariableAutoComplete.IsEnabled="True"
                                                      Text="{Binding ReplaceText, UpdateSourceTrigger=PropertyChanged}"/>
                                         </StackPanel>
                                     </Border>
@@ -1320,20 +1352,22 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- 底部操作行：查找 / 替换（原「应用到编辑器」）。
-                             放在规则列表下面贴着查找内容区 —— 编辑模式里填完规则直接找 / 替，不用抬头找按钮；
-                             也修掉了原先挤在标题行里被裁掉的问题（横向 StackPanel 窄时不换行只会硬裁）。 -->
+                        <!-- 底部操作行：查找 / 替换。
+                             「替换」双路由（走代码后置 Click，不用 DataTrigger 切 Command —— 那条路
+                             在网盘模式下 CanExecute 重查时机不稳，用户实测仍点不动）：
+                             本地编辑模式 → 把规则应用到正在编辑的文件内容；
+                             115 网盘模式 → 按规则改网盘选中项的文件名。
+                             IsEnabled 显式绑两边的可用条件（网盘 = 选中非空且不忙；本地 = 编辑器命令可用）。 -->
                         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
                             <Button Content="查找"
                                     Click="FindInEditor_Click"
                                     Width="76" Height="28" Margin="0,0,8,0"
                                     Background="#FFFFFF" BorderBrush="#87B6EA"
-                                    ToolTip="在正在编辑的内容里查找选中规则（没选中就用第一条）的「查找内容」，找到后高亮选中并滚动过去；&#10;连续点会从当前位置往后找，到结尾再绕回开头。"/>
-                            <Button Content="替换"
-                                    Command="{Binding ApplyRulesToEditorCommand}"
-                                    Width="76" Height="28"
+                                    ToolTip="本地编辑模式：在正在编辑的内容里查找选中规则（没选中就用第一条）的「查找内容」，找到后高亮选中并滚动过去。"/>
+                            <Button Content="替换" Width="76" Height="28"
                                     Background="#1890FF" Foreground="White" FontWeight="SemiBold"
-                                    ToolTip="把上面这些替换规则应用到**正在编辑的文件**内容上，就地保存（沿用当前编码，写回前留 .bak）。&#10;只在编辑模式里可用；回列表模式用各组的「开始」处理整批文件。"/>
+                                    Click="ReplaceButton_Click"
+                                    ToolTip="本地编辑模式：把规则应用到正在编辑的文件内容，就地保存（留 .bak）。&#10;115 网盘模式：按规则改网盘选中项的文件名（文件与文件夹需分开选）。"/>
                         </StackPanel>
                     </Grid>
                 </GroupBox>

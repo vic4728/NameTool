@@ -44,18 +44,41 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- 日志卡片：白底圆角承载列表（原先是裸 ListBox 直接贴在默认窗口底上）。
-             SelectionMode=Extended：可 Ctrl/Shift 多选行；容器样式去掉默认蓝底，选中行只是淡高亮 -->
-        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#D6E4F3" BorderThickness="1" CornerRadius="4">
+        <!-- 日志卡片：黑色终端风底（用户要求）承载列表。条目颜色由 LogEntryColorSelector 按
+             级别 / 内容决定：时间戳绿色、正常信息白色、错误 / 失败红色（见 LogWindow.xaml.cs）。 -->
+        <Border Grid.Row="0" Background="#0C0C0C" BorderBrush="#D6E4F3" BorderThickness="1" CornerRadius="4">
             <ListBox x:Name="LogList"
                      Background="Transparent"
                      BorderThickness="0"
                      ItemsSource="{Binding Logs}"
                      SelectionMode="Extended"
-                     ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     Foreground="#FFFFFF"
+                     FontSize="15"
+                     FontFamily="Consolas, Microsoft YaHei">
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <!-- 黑底上选中行不能用默认的高亮蓝（会把字色吞掉），换暗蓝并保持文字前景色 -->
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="RowBorder" Background="{TemplateBinding Background}"
+                                            Padding="6,1">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="RowBorder" Property="Background" Value="#1E3A5F"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="RowBorder" Property="Background" Value="#16283C"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
                     </Style>
                 </ListBox.ItemContainerStyle>
             </ListBox>

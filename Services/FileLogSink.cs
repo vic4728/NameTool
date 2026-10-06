@@ -21,6 +21,20 @@ public static class FileLogSink
     private static readonly object Gate = new();
     private static string? _path;
 
+    /// <summary>
+    /// DEBUG 级开关（用户要求，2026-10-06）：true 时 <see cref="Debug"/> 记录的信息（各操作
+    /// 返回码 / 接口原文等）也进窗口与文件。默认 false（只记 INFO / ERROR）。
+    /// 由「设置」持久化（UiStateStore），见 MainViewModel.DebugLogEnabled。
+    /// </summary>
+    public static bool DebugEnabled { get; set; }
+
+    /// <summary>DEBUG 级记录：仅在 <see cref="DebugEnabled"/> 开启时进窗口与文件（级别 [DEBUG]）。</summary>
+    public static void Debug(string message)
+    {
+        if (!DebugEnabled) return;
+        Write(message, "DEBUG");
+    }
+
     /// <summary>程序启动时调用一次，指定日志文件路径（传 null 或空串 = 不落盘）。</summary>
     public static void Configure(string? path)
     {

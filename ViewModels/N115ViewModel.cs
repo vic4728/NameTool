@@ -220,6 +220,9 @@ public sealed class N115ViewModel : ObservableObject
         private set => SetProperty(ref _statusText, value);
     }
 
+    /// <summary>状态行文案（宿主窗口在网盘命令不可用时提示用户；如「请先选中要改名的条目」）。</summary>
+    public void SetStatusText(string text) => StatusText = text;
+
     public string SelectionSummary
     {
         get => _selectionSummary;
@@ -870,6 +873,97 @@ public sealed class N115ViewModel : ObservableObject
     private Task RenameSelectedAsync() => RenameSelectedCoreAsync(toSimplified: false);
 
     /// <summary>
+    /// 「批量替换」区底部的「替换」按钮（网盘模式）：**有选中改选中，没选中改当前目录全部条目**。
+    /// 与预览列的 fallback 语义对齐 —— 预览在未选中时也是按全部条目显示的，
+    /// 替换必须同一口径（用户看到预览有结果，点替换就该改那些条目，而不是被要求先选中）。
+    /// 全部条目里通常文件 + 文件夹混选，按现有约束拆成两批先后执行（先文件后文件夹）。
+    /// </summary>
+    public async void ReplaceByRules()
+    {
+        if (_client is null)
+        {
+            SetStatusText("尚未登录 115，无法执行替换");
+            return;
+        }
+
+        if (IsBusy)
+        {
+            SetStatusText("正在执行其它操作，请等它完成再替换");
+            return;
+        }
+
+        var selected = _selection.Where(x => !x.IsParentEntry).ToList();
+        if (selected.Count > 0)
+        {
+            // 有选中：与「按右侧规则重命名」完全同一语义
+            await RenameSelectedCoreAsync(toSimplified: false);
+            return;
+        }
+
+        // 没选中：改当前目录全部条目（预览的 fallback 口径）。
+        // 文件与文件夹必须分开批：先文件后文件夹，每批走一次 RenameSelectedCoreAsync。
+        // 实现 = 临时把全部条目灌进选中集合走老链路（含确认框 / 校验 / 撤销栈 / 状态提示），完成后还原选择。
+        var all = Items.Where(x => !x.IsParentEntry).ToList();
+        if (all.Count == 0)
+        {
+            SetStatusText("当前目录是空的，没有可替换的条目");
+            return;
+        }
+
+        var savedSelection = _selection;
+        try
+        {
+            // 只选文件 → 走一遍；只选文件夹 → 再走一遍（RenameSelectedCoreAsync 按当前 _selection 取目标）
+            var files = all.Where(x => !x.IsDirectory).ToList();
+            var folders = all.Where(x => x.IsDirectory).ToList();
+
+            if (files.Count > 0)
+            {
+                _selection = files;
+                UpdateSelectionStats();
+                await RenameSelectedCoreAsync(toSimplified: false);
+            }
+
+            if (folders.Count > 0 && _client is not null && !IsBusy)
+            {
+                _selection = folders;
+                UpdateSelectionStats();
+                await RenameSelectedCoreAsync(toSimplified: false);
+            }
+        }
+        finally
+        {
+            _selection = savedSelection;
+            UpdateSelectionStats();
+        }
+    }
+
+    /// <summary>刷新选中统计（SelectionSummary / RenameButtonText / 命令可用态）。
+    /// 供「替换 = 没选中改全部」的临时选中切换后调用。</summary>
+    private void UpdateSelectionStats()
+    {
+        var list = _selection.Where(x => !x.IsParentEntry).ToList();
+        var folders = list.Count(x => x.IsDirectory);
+        var files = list.Count - folders;
+        SelectionSummary = list.Count == 0
+            ? "未选择"
+            : folders == 0
+                ? $"已选 {files} 个文件"
+                : files == 0
+                    ? $"已选 {folders} 个文件夹"
+                    : $"已选 {list.Count} 项（文件 {files} / 文件夹 {folders}，需分开改名）";
+        RenameButtonText = BuildRenameButtonText(list);
+
+        ClearSelectionCommand.RaiseCanExecuteChanged();
+        RenameSelectedCommand.RaiseCanExecuteChanged();
+        ToSimplifiedCommand.RaiseCanExecuteChanged();
+        RenameSingleCommand.RaiseCanExecuteChanged();
+        MoveToCommand.RaiseCanExecuteChanged();
+        CopyToCommand.RaiseCanExecuteChanged();
+        DeleteSelectedCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
     /// 「繁=&gt;简」：与按规则改名共用同一条落地路径（同一套校验、限速、撤销栈），
     /// 差别只在「新名字怎么算」——这里是把原名里的繁体转成简体，不看右侧任何规则。
     /// </summary>
@@ -974,16 +1068,10 @@ public sealed class N115ViewModel : ObservableObject
 
         if (plan.Count > 12) preview.AppendLine($"  ...（共 {plan.Count} 项）");
 
-        var summary = toSimplified
-            ? $"将对 115 网盘中的 {plan.Count} 个{kindText}做「繁=>简」改名（只改名字，不读也不写文件内容）：\n\n{preview}\n"
-            : $"将对 115 网盘中的 {plan.Count} 个{kindText}改名：\n\n{preview}\n";
-        if (unchanged > 0) summary += $"（另有 {unchanged} 个{kindText}改名后无变化，自动跳过）\n";
-        summary += "\n确认继续？";
-
-        if (UiDialog.Show(summary, actionTitle, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-        {
-            return;
-        }
+        // 2026-10-06 起不再弹「确认继续？」——改名 / 替换直接执行，完成后弹成功 / 失败数量报告。
+        // 改名前先把计划写进日志（执行中的留痕不依赖确认框）。
+        _log($"[115] {actionTitle}：对 {plan.Count} 个{kindText}执行改名"
+             + (unchanged > 0 ? $"（另有 {unchanged} 个无变化跳过）" : ""));
 
         var ct = ResetCts();
         IsBusy = true;
@@ -1004,6 +1092,7 @@ public sealed class N115ViewModel : ObservableObject
                     item.Name = newName;
                     ok++;
                     _log($"[115][OK] {oldName} → {newName}");
+                    Services.FileLogSink.Debug($"[115] RenameAsync(fid={item.Id}) 返回成功");
                 }
                 catch (OperationCanceledException)
                 {
@@ -1013,6 +1102,7 @@ public sealed class N115ViewModel : ObservableObject
                 {
                     fail++;
                     _log($"[115][FAIL] {oldName} → {newName}：{ex.Message}");
+                    Services.FileLogSink.Debug($"[115] RenameAsync(fid={item.Id}) 返回失败：{ex.Message}");
                 }
 
                 await Task.Delay(RenameThrottle, ct);
@@ -1358,28 +1448,9 @@ public sealed class N115ViewModel : ObservableObject
         var folders = targets.Count(x => x.IsDirectory);
         var files = targets.Count - folders;
 
-        var summary = new StringBuilder();
-        summary.AppendLine($"将把 115 网盘中的 {targets.Count} 项（文件夹 {folders} / 文件 {files}）{verb}到：");
-        summary.AppendLine($"    {picked.PathText}");
-        summary.AppendLine();
-        foreach (var item in targets.Take(12))
-        {
-            summary.AppendLine($"  {(item.IsDirectory ? "[夹]" : "[文]")} {item.Name}");
-        }
-
-        if (targets.Count > 12) summary.AppendLine($"  ...（共 {targets.Count} 项）");
-        summary.AppendLine();
-        summary.AppendLine(move
-            ? "移动后这些内容会从当前目录消失。"
-            : "复制不会改动原位置的内容。");
-        summary.AppendLine();
-        summary.Append("确认继续？");
-
-        if (UiDialog.Show(summary.ToString(), $"115 网盘{verb}",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-        {
-            return;
-        }
+        // 2026-10-06 起不再弹「确认继续？」——移动 / 复制直接执行，完成后状态栏 + 日志反馈
+        //（失败仍弹窗）。目标与清单在日志里留痕。
+        _log($"[115] {verb}：{targets.Count} 项（文件夹 {folders} / 文件 {files}）→ 「{picked.PathText}」(cid={picked.Id})");
 
         var ids = targets.Select(x => x.Id).ToList();
         var ct = ResetCts();
